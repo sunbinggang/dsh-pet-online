@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- 修 CI 卡住：`npm test` 改为无参发现 + `--test-force-exit`（Windows 的 cmd 不展开 `test/*.test.js`，Node 也不 glob）；工作流固定 Node 24。
+- 修自动中继换端口不生效：`relayUrl` 在本机地址之间切换时先关旧 relay 再按新端口启动；端口被外部 relay 占用则跳过。
+- 测试：自动中继用例加 try/finally，失败时也会释放中继，避免测试进程挂起。
+
 ## 0.4.1
 
 - 修复「显示未连接、看不到对方宠物」：默认地址指向 `127.0.0.1` 时，插件会**自动在本机启动 relay**（端口被占用则跳过，说明已有中继）；`autoRelay` 默认开。

@@ -190,13 +190,16 @@ test('端到端：relay 地址指向本机时自动启动中继', async () => {
   const petA = await fakePetServer('A 的鱼')
   const home = await mkdtemp(join(tmpdir(), 'dpo-g-'))
   const service = await makeService(home, petA.origin, 'G', `ws://127.0.0.1:${port}/ws`)
-  const paired = await service.pair('AUT234')
-  assert.equal(paired.ok, true)
-  const online = await waitUntil(() => service.snapshot().relay.status === 'online')
-  assert.ok(online, 'auto relay should make the client online')
-  service.stop()
-  petA.server.closeAllConnections?.()
-  await new Promise((r) => petA.server.close(r))
+  try {
+    const paired = await service.pair('AUT234')
+    assert.equal(paired.ok, true)
+    const online = await waitUntil(() => service.snapshot().relay.status === 'online')
+    assert.ok(online, 'auto relay should make the client online')
+  } finally {
+    service.stop()
+    petA.server.closeAllConnections?.()
+    await new Promise((r) => petA.server.close(r))
+  }
 })
 
 test('端到端：对方专注会话中时互动降级为仅气泡', async () => {
