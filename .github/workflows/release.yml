@@ -1,0 +1,26 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: test
+        run: npm test
+      - name: pack
+        run: npm pack
+      - name: create GitHub Release with tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-pet-online-*.tgz
+          generate_release_notes: true

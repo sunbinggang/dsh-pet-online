@@ -1,1 +1,152 @@
-# dsh-pet-online
+# dsh-pet-online 🐾🌐
+
+给 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 桌宠加一层**在线联机**：两台（或多台）装了好 DSH 的机器输入同一个配对码，就能互相看见、互相打招呼/投喂/戳一下。
+
+**不改 dsh-pet 源码，不 import 它的模块**——只走它公开的 `/dsh-pet-7340/*` 路由（`/state` 长轮询、`/config`、`/broadcast`、`/anim`、`/throw`）。
+
+## 现在能做什么（v0.4 · P1）
+
+- **配对**：一方生成 6 位配对码，另一方输入，即进入同一 relay 房间。
+- **在线列表**：设置页「桌宠联机」里看到同房间的设备（名字、宠物、在线状态）。
+- **投影**：远端宠物以「访客精灵」出现在 DSH 浮动层上，跟它的动作、气泡、睡觉状态走。
+- **访客物理**：访客精灵有自己的重力/落地回弹/边界反弹/彼此碰撞，可以拖拽抛掷、点一下戳对方（走独立物理循环，不会推动你本机的桌宠）。
+- **互动**：打招呼 / 投喂 / 戳一下 / 抱抱 / 留言。
+- **跨机聊天**：面板里给对方的宠物发一句话，对方用自己的 LLM 人设 + 记忆回你；双方消息都留在面板会话里。
+- **忙碌降级**：对方正在专注会话时，互动只弹气泡不抢动画。
+- **回执与开关**：互动回执、聊天开关（接受聊天会消耗对方模型 token）、气泡共享开关。
+- **隐私边界**：跨机只交换宠物摘要、互动意图与聊天文本；不含对话记忆、文件、账号。
+
+边界：访客物理只作用于访客精灵本身（本机桌宠是独立渲染层，暂不接收联机碰撞力）。
+
+## 安装
+
+### 1. 前置
+
+- DSH `0.2.1-rc.2` 及以上（桌面版）；
+- 已安装并启用 `dsh-pet`，宠物可见；
+- 本插件依赖 Node 22+（DSH 自带运行时满足）。
+
+### 2. 装插件
+
+从本目录运行（幂等，会备份 profile 的 package.json）：
+
+```bash
+node scripts/install.mjs                 # 自动找 ~/.dsh/profiles/${DSH_PROFILE:-desktop}
+node scripts/install.mjs --profile <目录> # 指定 profile
+```
+
+脚本做两件事：把本包 junction 到 `<profile>/node_modules/dsh-pet-online`，并把 `dsh-pet-online` 加进 `dsh.profile.bundles`。
+
+重启 DSH 后，设置页会出现「桌宠联机」。
+
+### 3. 启动 relay（任一台机器）
+
+```bash
+node relay/server.mjs            # 默认 7420
+node relay/server.mjs 7421       # 自定义端口
+```
+
+relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流；**不落盘、不解析业务内容**。局域网内一人起一个即可，其他人把 relay 地址填成 `ws://<那台机器IP>:7420/ws`。
+
+> 默认 `relayUrl` 是 `ws://127.0.0.1:7420/ws`（本机自测用）。跨机联机时在面板/配置里改成对方 IP。
+
+### 4. 配对
+
+1. A 打开 设置 → 桌宠联机 → **生成配对码**；
+2. B 输入这 6 位码 → **加入**；
+3. 双方在线列表里出现彼此，点「打招呼」试试。
+
+配对码 10 分钟内有效；断开后房间自动消失。
+
+## 配置
+
+配置文件：`$DSH_HOME/dsh-pet-online/config.json`（面板保存时写回）。
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 总开关 |
+| `relayUrl` | `ws://127.0.0.1:7420/ws` | relay 地址（跨机改 IP） |
+| `nickname` | `""` | 联机昵称，留空用宠物名 |
+| `acceptInteractions` | `true` | 是否接受别人互动 |
+| `acceptChat` | `true` | 是否接受跨机聊天（会消耗本机模型 token） |
+| `shareBubbles` | `true` | 是否共享气泡文字 |
+| `maxPeers` | `8` | 同房间最多显示多少台 |
+| `pairCode` | `""` | 上次配对码（自动重连用） |
+
+## 协议速览
+
+帧：`{ v:1, type, from?, to?, payload }`，JSON over WebSocket，单帧 ≤ 64 KiB。
+
+| 类型 | 方向 | 用途 |
+|---|---|---|
+| `hello` | 插件→relay | 加入房间，带 deviceId/昵称/宠物 |
+| `welcome` | relay→插件 | 回当前在线列表 |
+| `presence` | 插件→插件 | 宠物摘要（名/大小/动作/气泡/睡觉），变化时 1s 内合并发送，空闲 15s 保活 |
+| `interaction` | 插件→插件 | `{msgId,intent,note,fromName}`，intent 六选一 |
+| `reaction` | 插件→插件 | 互动回执 `{msgId,ok,reason,mode}` |
+| `chat` | 插件→插件 | 跨机聊天 `{msgId,text,fromName}` |
+| `chat-reply` | 插件→插件 | 聊天回复 `{msgId,ok,text|reason}` |
+| `peer-leave` | relay→插件 | 对端断开 |
+
+面板与投影侧另有两个本机路由：
+
+- `GET /dsh-pet-online/state`：面板快照（连接状态、配对码、在线设备、回执）；
+- `GET /dsh-pet-online/events?since=&timeout=`：覆盖层长轮询，版本变化即返回远端宠物摘要（含 `assetRoot`，用于取本机 dsh-pet 的同名 webm）。
+
+互动意图只有 6 种（`wave/treat/pet/poke/hug/visit-note`）——远端不能传任意动画名或任意文案：动画由**本机**从本机宠物自己的池子里挑，文案由本机模板拼装，避免注入与素材不存在。
+
+## 安全边界
+
+- 只建议在可信网络使用；MVP 的 relay 是明文 `ws://`，没有账号体系。
+- relay 只做转发，不落盘；房间码不是密码，知道配对码的人可以加入同一房间。
+- 面板 API 只服务回环地址，并校验 Host/Origin 同源。
+- 互动限流：每对设备 6 次/分钟；relay 单连接 40 帧/秒、单帧 ≤ 64 KiB、房间 ≤ 8 台。
+- 跨机只交换宠物摘要与互动意图，不含对话记忆、文件、账号。
+
+## 开发
+
+```bash
+node --test test/*.test.js     # 14 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
+node scripts/selfcheck.mjs     # 不开 DSH 跑一遍完整联机链路，打印每一步
+node scripts/livecheck.mjs     # 真机联调：用新代码直接对接运行中的 dsh-pet（默认 62142）
+node scripts/install.mjs       # 装进本地 profile（幂等）
+```
+
+`livecheck` 需要本机 DSH 正在运行，会临时起一个联机实例并模拟第二台设备，往你的桌宠弹一条「留言」气泡。
+
+自检输出示例：
+
+```
+▶ 启动 relay
+▶ 双方输入同一配对码
+  ✓ relay 已连接：pair:TEST23
+▶ A 向 B 打招呼
+  ✓ B 收到 /anim
+  ✓ 回执：ok=true mode=full
+✅ 全链路 OK
+```
+
+目录：
+
+```
+lib/protocol.js     两端共用协议（帧形状、意图、清洗）
+lib/local-bridge.js 本机 dsh-pet HTTP 桥（状态/配置/动作）
+lib/relay-client.js  relay 客户端（重连/心跳）
+lib/service.js      编排层（presence 发布 + 互动处理 + 面板快照）
+lib/routes.js       面板 API（/dsh-pet-online/*）
+lib/index.js        cordis 插件入口
+client.js           浏览器半侧（设置页面板）
+relay/server.mjs    零依赖 WS relay
+```
+
+## 发布清单
+
+- `icon.svg`（≤256 KiB，随包发布），`package.json` 的 `dsh.bundle.patch` + `dsh.client` 已就位；
+- `cordis.patch.yml` 的 entry id 为 `dsh-pet-online`（与包名一致、无行尾注释）；
+- `files` 只发 `lib / client.js / relay / scripts / cordis.patch.yml / README.md / CHANGELOG.md / LICENSE / icon.svg`；
+- `dsh.compatibility.dshReleases` 按实测版本维护，只留最新三版；
+- 打包自检：`npm pack --dry-run --json` 核对文件清单；`node --test` 与 `selfcheck` 全绿后再提交。
+
+## License
+
+MIT。素材（宠物动画）版权归 dsh-pet 作者，本插件不打包任何素材。

@@ -1,0 +1,11 @@
+# dsh-pet-online bundle patch —— 把联机插件挂进 DSH 配置树。
+#
+# 一行同时挂两半：
+#   - 宿主半侧（exports "." → lib/index.js）：本机 dsh-pet 状态桥 + relay 客户端 + /dsh-pet-online 路由
+#   - 浏览器半侧（exports "./client" → client.js）：设置页「桌宠联机」面板
+#
+# id 必须全局唯一且与包名一致：商城预检按 entry id 比对，裸名（如 pet）会和
+# 其它插件的行标识冲突；这一行也不能写行尾注释（商城正则要求值后直接换行）。
+- insert:
+    - id: dsh-pet-online
+      name: 'dsh-pet-online'
