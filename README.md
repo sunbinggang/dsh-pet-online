@@ -1,8 +1,10 @@
 # dsh-pet-online 🐾🌐
 
-给 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 桌宠加一层**在线联机**：两台（或多台）装了好 DSH 的机器输入同一个配对码，就能互相看见、互相打招呼/投喂/戳一下。
+给 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 桌宠加一层**在线联机**：两台（或多台）装了 DSH 的机器输入同一个配对码，就能互相看见、互动、跨机聊天。
 
-**不改 dsh-pet 源码，不 import 它的模块**——只走它公开的 `/dsh-pet-7340/*` 路由（`/state` 长轮询、`/config`、`/broadcast`、`/anim`、`/throw`）。
+**仓库**：<https://github.com/sunbinggang/dsh-pet-online> · **发布**：<https://github.com/sunbinggang/dsh-pet-online/releases/tag/v0.4.0>
+
+**不改 dsh-pet 源码，不 import 它的模块**——只走它公开的 `/dsh-pet-7340/*` 路由（`/state` 长轮询、`/config`、`/broadcast`、`/anim`、`/throw`、`/chat`）。
 
 ## 现在能做什么（v0.4 · P1）
 
