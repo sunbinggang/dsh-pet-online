@@ -96,6 +96,13 @@ window.__ModuleLoader__.load({
       const [accept, setAccept] = useState(true)
       const [share, setShare] = useState(true)
       const [acceptChat, setAcceptChat] = useState(true)
+      const [relayUrlInput, setRelayUrlInput] = useState('')
+
+      useEffect(() => {
+        if (snap && snap.config && typeof snap.config.relayUrl === 'string') {
+          setRelayUrlInput(snap.config.relayUrl)
+        }
+      }, [snap && snap.config && snap.config.relayUrl])
 
       useEffect(() => {
         if (!snap || !snap.config) return
@@ -226,6 +233,13 @@ window.__ModuleLoader__.load({
                 ),
           ),
           notice ? h('div', { className: 'dpo-muted', style: { marginTop: 8 } }, notice) : null,
+          !online && pairing.code
+            ? h(
+                'div',
+                { className: 'dpo-err', style: { marginTop: 8 } },
+                '中继未连接：本机会在启用时自动在 127.0.0.1 起中继（端口 7420）；跨机联机请把下方「中继地址」改成中继机器的局域网 IP，并在防火墙放行 TCP 7420。',
+              )
+            : null,
         ),
         h(
           'div',
@@ -318,6 +332,24 @@ window.__ModuleLoader__.load({
             h('label', { className: 'dpo-row' }, h('input', { type: 'checkbox', checked: share, onChange: (e) => { setShare(e.target.checked); save({ shareBubbles: e.target.checked }) } }), '向联机设备共享宠物气泡文字'),
           ),
           h('div', { className: 'dpo-muted', style: { marginTop: 8 } }, '联机数据只含宠物名、大小、动作与气泡；不含对话记忆、文件或账号信息。'),
+          h(
+            'div',
+            { className: 'dpo-row', style: { marginTop: 10 } },
+            h('span', { className: 'dpo-muted' }, '中继地址'),
+            h('input', {
+              className: 'dpo-input',
+              style: { width: 240, letterSpacing: 0, textTransform: 'none' },
+              value: relayUrlInput,
+              placeholder: 'ws://192.168.1.10:7420/ws',
+              onChange: (e) => setRelayUrlInput(e.target.value),
+            }),
+            h(
+              'button',
+              { className: 'dpo-btn', disabled: busy, onClick: () => save({ relayUrl: relayUrlInput.trim() }) },
+              '保存',
+            ),
+          ),
+          h('div', { className: 'dpo-muted', style: { marginTop: 6 } }, '同机自测留 127.0.0.1；跨机填中继那台机器的局域网 IP。'),
         ),
         toasts.length > 0
           ? h('div', { className: 'dpo-toast' }, toasts.map((t) => h('div', { className: 'dpo-toast-item', key: t.id }, t.text)))

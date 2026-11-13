@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-online",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "给 dsh-pet 桌宠加在线联机：多台机器配对后互相看见、互动、跨机聊天，远端宠物投影到本机浮层并带本地物理。不改 dsh-pet 源码，只走它公开的 /dsh-pet-7340 路由。",
   "type": "module",
   "main": "lib/index.js",

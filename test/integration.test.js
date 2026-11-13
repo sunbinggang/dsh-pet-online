@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import net from 'node:net'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,17 @@ import { createOnlineService } from '../lib/service.js'
 import { createRelayServer } from '../relay/server.mjs'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port
+      server.close(() => resolve(port))
+    })
+    server.on('error', reject)
+  })
+}
 
 async function waitUntil(fn, timeoutMs = 8000, step = 100) {
   const started = Date.now()
@@ -171,6 +183,20 @@ test('端到端：跨机聊天走对方 LLM 人设并回到本机记录', async 
   await new Promise((r) => petB.server.close(r))
   relay.closeAllConnections?.()
   await new Promise((r) => relay.close(r))
+})
+
+test('端到端：relay 地址指向本机时自动启动中继', async () => {
+  const port = await freePort()
+  const petA = await fakePetServer('A 的鱼')
+  const home = await mkdtemp(join(tmpdir(), 'dpo-g-'))
+  const service = await makeService(home, petA.origin, 'G', `ws://127.0.0.1:${port}/ws`)
+  const paired = await service.pair('AUT234')
+  assert.equal(paired.ok, true)
+  const online = await waitUntil(() => service.snapshot().relay.status === 'online')
+  assert.ok(online, 'auto relay should make the client online')
+  service.stop()
+  petA.server.closeAllConnections?.()
+  await new Promise((r) => petA.server.close(r))
 })
 
 test('端到端：对方专注会话中时互动降级为仅气泡', async () => {
