@@ -118,4 +118,18 @@ test('浏览器半侧：模块契约与两个插槽注册', async () => {
   assert.match(bubbleRule, /background:#fff/, 'guest bubble needs an explicit white background')
   assert.match(bubbleRule, /color:#1f2937/, 'guest bubble needs an explicit dark text color')
   assert.doesNotMatch(bubbleRule, /--dsw-alias-bg-base/, 'guest bubble must not inherit the page background')
+
+  // 回归：联机气泡要像原生碎碎念一样带配图，图片样式与 bubbleImage 渲染都要在。
+  assert.match(css, /\.dpo-guest-bubble-img\{/, 'missing guest bubble image style')
+  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(source, /bubbleImage/, 'guest bubble must render the peer bubble image')
+  assert.match(source, /\/dsh-pet-7340\/pic\/memes\//, 'bubble image must come from dsh-pet meme route')
+})
+
+test('浏览器半侧：留言/聊天用自带输入框，不依赖 window.prompt', async () => {
+  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  // DSH 桌面壳（Electron）禁用了 window.prompt，用它会导致「点了没反应」。
+  assert.doesNotMatch(source, /window\.prompt\s*\(/, 'must not use window.prompt')
+  assert.match(source, /dpo-compose/)
+  assert.match(source, /submitCompose/)
 })

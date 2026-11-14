@@ -59,12 +59,14 @@ test('宠物摘要：只带联机需要的字段，气泡受开关控制', () =>
     facing: 'right',
     sleeping: false,
     bubble: '今天也要好好干活哦~',
+    bubbleImage: 'Ciallo',
     x: 0.123456,
     y: 0.5,
   }
   const withBubble = summarizePet(pet, { shareBubbles: true })
   assert.equal(withBubble.size, 463)
   assert.equal(withBubble.bubble, '今天也要好好干活哦~')
+  assert.equal(withBubble.bubbleImage, 'Ciallo')
   assert.equal(withBubble.x, 0.123)
   const noBubble = summarizePet(pet, { shareBubbles: false })
   assert.equal(noBubble.bubble, undefined)

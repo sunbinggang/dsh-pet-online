@@ -23,6 +23,11 @@ function fakePetServer(options = {}) {
             idle: ['待机呼吸休闲'],
             turn: ['转身'],
           },
+          memes: {
+            Ciallo: '比耶打招呼',
+            吃饱饱摸肚子: '吃饱了',
+            深度睡眠: '睡着了',
+          },
         },
       })
       return
@@ -58,9 +63,18 @@ function fakePetServer(options = {}) {
       })
       return
     }
-    calls.push({ method: req.method, path: url.pathname })
-    req.on('data', () => {})
+    const record = { method: req.method, path: url.pathname }
+    calls.push(record)
+    let raw = ''
+    req.on('data', (chunk) => {
+      raw += chunk
+    })
     req.on('end', () => {
+      try {
+        record.body = JSON.parse(raw || 'null')
+      } catch {
+        record.body = null
+      }
       // 模拟 dsh-pet 的 sleepGated：睡觉时 anim/broadcast/chat 都拒绝
       if (flags.sleeping && ['/dsh-pet-7340/anim', '/dsh-pet-7340/broadcast', '/dsh-pet-7340/chat'].includes(url.pathname)) {
         json({ ok: false, reason: 'sleeping', message: '桌宠正在睡觉，先叫醒它' })
@@ -136,6 +150,28 @@ test('bridge：localPets 展开条目树并带 assetRoot', async () => {
     server.closeAllConnections?.()
     server.close(r)
   })
+})
+
+test('bridge：投喂零食只播吃东西动画 + 气泡，不抛掷宠物', async () => {
+  const { server, calls } = await fakePetServer()
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    const result = await bridge.applyIntent('treat', { anim: 'eat', text: '{from} 给你投喂了零食' }, { from: '小鱼' })
+    assert.equal(result.ok, true)
+    const paths = calls.map((c) => c.path)
+    assert.ok(!paths.includes('/dsh-pet-7340/throw'), 'treat 不应调用 /throw（那是抛宠物）')
+    assert.ok(paths.includes('/dsh-pet-7340/anim'))
+    assert.ok(paths.includes('/dsh-pet-7340/broadcast'))
+    const animCall = calls.find((c) => c.path === '/dsh-pet-7340/anim')
+    assert.ok(/吃|零食/.test(animCall.body.name), '应挑吃东西类动画，实际：' + animCall.body.name)
+    const say = calls.find((c) => c.path === '/dsh-pet-7340/broadcast')
+    assert.equal(say.body.image, '吃饱饱摸肚子', '投喂气泡应带吃东西的表情包')
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
 })
 
 test('bridge：睡觉/叫醒/动作意图落到 dsh-pet 对应端点', async () => {

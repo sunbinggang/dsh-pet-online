@@ -46,6 +46,8 @@ window.__ModuleLoader__.load({
       // 气泡固定用白底深字：不能再取 --dsw-alias-bg-base（深色主题下它就是页面底色，气泡会整块“隐形”只剩文字）。
       '.dpo-guest-bubble{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);z-index:3;margin-bottom:8px;max-width:240px;padding:6px 11px;border-radius:11px;background:#fff;border:1px solid rgba(148,163,184,.45);color:#1f2937;font-size:12px;line-height:1.4;text-align:center;white-space:pre-wrap;word-break:break-word;box-shadow:0 6px 18px rgba(0,0,0,.22);pointer-events:none}',
       ".dpo-guest-bubble::after{content:'';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);border:6px solid transparent;border-top-color:#fff;border-bottom:0}",
+      '.dpo-guest-bubble.has-img{width:auto;min-width:96px;padding:6px 8px 7px}',
+      '.dpo-guest-bubble-img{display:block;width:104px;max-width:100%;height:auto;border-radius:8px;margin:0 auto 5px;object-fit:cover}',
       '.dpo-guest-name{margin-top:4px;padding:1px 8px;border-radius:9px;background:rgba(15,23,42,.45);color:#e2e8f0;font-size:11px;white-space:nowrap}',
       '.dpo-guest.dpo-sleeping{opacity:.55}',
       '.dpo-guest-zzz{font-size:12px;color:#94a3b8}',
@@ -56,6 +58,11 @@ window.__ModuleLoader__.load({
       '.dpo-menu-item:hover{background:var(--dsw-alias-bg-layer-1,rgba(148,163,184,.18))}',
       '.dpo-menu-item[disabled]{opacity:.45;cursor:not-allowed}',
       '.dpo-menu-title{padding:4px 10px 6px;font-size:11px;color:var(--dsw-alias-label-secondary,#94a3b8)}',
+      '.dpo-compose{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483002;width:min(360px,calc(100vw - 32px));padding:14px;border-radius:12px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 20px 50px rgba(0,0,0,.45);pointer-events:auto;color:var(--dsw-alias-label-primary,#e2e8f0);box-sizing:border-box}',
+      '.dpo-compose-title{font-size:13px;margin-bottom:8px;line-height:1.4}',
+      '.dpo-compose-input{width:100%;min-height:64px;resize:vertical;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.4));background:var(--dsw-alias-bg-layer-1,rgba(15,23,42,.6));color:var(--dsw-alias-label-primary,#e2e8f0);font:inherit;font-size:12px;padding:8px;box-sizing:border-box}',
+      '.dpo-compose-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}',
+      '.dpo-compose-hint{margin-top:6px;font-size:11px;color:var(--dsw-alias-label-secondary,#94a3b8)}',
       '.dpo-overlay-toast{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:32;padding:8px 14px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));font-size:12px;color:var(--dsw-alias-label-primary,#e2e8f0);pointer-events:none}',
     ].join('\n')
 
@@ -206,6 +213,7 @@ window.__ModuleLoader__.load({
       const [acceptRawChat, setAcceptRawChat] = useState(true)
       const [acceptRemoteMusic, setAcceptRemoteMusic] = useState(false)
       const [drafts, setDrafts] = useState({})
+      const [compose, setCompose] = useState(null)
       const [updateCheckOn, setUpdateCheckOn] = useState(true)
       const [relayUrlInput, setRelayUrlInput] = useState('')
 
@@ -301,22 +309,28 @@ window.__ModuleLoader__.load({
           '已向 ' + peer.name + ' 发起交互',
         )
 
-      const leaveNote = (peer) => {
-        const note = window.prompt('给 ' + peer.name + ' 留句话（40 字以内）', '')
-        if (note === null) return
-        const trimmed = note.trim().slice(0, 40)
-        if (trimmed === '') return
-        interact(peer, 'visit-note', trimmed)
-      }
+      // 不用 window.prompt：DSH 桌面壳（Electron）里 prompt 被禁用，点了没反应。
+      const openCompose = (peer, kind) => setCompose({ peer, kind, value: '' })
 
-      const chatWith = (peer) => {
-        const text = window.prompt('跟 ' + peer.name + ' 的宠物说句话（它会用自己的 LLM 人设回你）', '')
-        if (text === null) return
-        const trimmed = text.trim().slice(0, 500)
-        if (trimmed === '') return
+      const submitCompose = async () => {
+        if (!compose) return
+        const text = String(compose.value || '').trim()
+        if (text === '') return
+        const peer = compose.peer
+        const kind = compose.kind
+        setCompose(null)
+        if (kind === 'note') {
+          interact(peer, 'visit-note', text.slice(0, 40))
+          return
+        }
+        const limit = 500
         run(
-          () => getJson('/chat', { method: 'POST', body: JSON.stringify({ to: peer.deviceId, text: trimmed }) }),
-          '消息已发出，等对方回话',
+          () =>
+            getJson('/chat', {
+              method: 'POST',
+              body: JSON.stringify({ to: peer.deviceId, text: text.slice(0, limit), raw: kind === 'raw' }),
+            }),
+          kind === 'ai' ? '消息已发出，等对方回话' : '文字消息已发出',
         )
       }
 
@@ -414,8 +428,8 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'treat') }, '投喂'),
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'poke') }, '戳一下'),
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'hug') }, '抱抱'),
-                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => leaveNote(peer) }, '留言'),
-                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => chatWith(peer) }, 'AI 聊天'),
+                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => openCompose(peer, 'note') }, '留言'),
+                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => openCompose(peer, 'ai') }, 'AI 聊天'),
                 ),
               ),
           (snap && Array.isArray(snap.reactions) ? snap.reactions : []).slice(0, 3).map((r) =>
@@ -473,7 +487,7 @@ window.__ModuleLoader__.load({
                       },
                       '发送',
                     ),
-                    h('button', { className: 'dpo-btn', disabled: busy, onClick: () => chatWith(peer) }, 'AI 回复'),
+                    h('button', { className: 'dpo-btn', disabled: busy, onClick: () => openCompose(peer, 'ai') }, 'AI 回复'),
                   ),
                 )
               }),
@@ -650,6 +664,47 @@ window.__ModuleLoader__.load({
         ),
         toasts.length > 0
           ? h('div', { className: 'dpo-toast' }, toasts.map((t) => h('div', { className: 'dpo-toast-item', key: t.id }, t.text)))
+          : null,
+        compose !== null
+          ? h(
+              'div',
+              { className: 'dpo-compose', onPointerDown: (e) => e.stopPropagation() },
+              h(
+                'div',
+                { className: 'dpo-compose-title' },
+                compose.kind === 'note'
+                  ? '给 ' + compose.peer.name + ' 留句话'
+                  : compose.kind === 'ai'
+                    ? '跟 ' + compose.peer.name + ' 的宠物说句话'
+                    : '给 ' + compose.peer.name + ' 发条消息（不经过模型）',
+              ),
+              h('textarea', {
+                className: 'dpo-compose-input',
+                autoFocus: true,
+                maxLength: compose.kind === 'note' ? 40 : 500,
+                value: compose.value,
+                onChange: (e) => setCompose({ ...compose, value: e.target.value }),
+                onKeyDown: (e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    void submitCompose()
+                  } else if (e.key === 'Escape') {
+                    setCompose(null)
+                  }
+                },
+              }),
+              h(
+                'div',
+                { className: 'dpo-compose-hint' },
+                compose.kind === 'ai' ? '会调用对方桌宠的 LLM，回复显示在它的气泡里' : compose.kind === 'raw' ? '直接送达对方，不经过模型' : '对方宠物会冒泡读出来',
+              ),
+              h(
+                'div',
+                { className: 'dpo-compose-actions' },
+                h('button', { className: 'dpo-btn', onClick: () => setCompose(null) }, '取消'),
+                h('button', { className: 'dpo-btn primary', onClick: () => void submitCompose() }, '发送'),
+              ),
+            )
           : null,
       )
     }
@@ -991,7 +1046,31 @@ window.__ModuleLoader__.load({
             onMenu?.(peer, e.clientX, e.clientY)
           },
         },
-        pet.bubble ? h('div', { className: 'dpo-guest-bubble' }, pet.bubble) : null,
+        pet.bubble
+          ? h(
+              'div',
+              { className: 'dpo-guest-bubble' + (pet.bubbleImage ? ' has-img' : '') },
+              [
+                pet.bubbleImage
+                  ? h('img', {
+                      key: 'img',
+                      className: 'dpo-guest-bubble-img',
+                      alt: pet.bubbleImage,
+                      src:
+                        '/dsh-pet-7340/pic/memes/' +
+                        encodeURIComponent(pet.assetRoot || 'main') +
+                        '/' +
+                        encodeURIComponent(pet.bubbleImage) +
+                        '.png',
+                      onError: (e) => {
+                        e.currentTarget.style.display = 'none'
+                      },
+                    })
+                  : null,
+                h('span', { key: 'text' }, pet.bubble),
+              ],
+            )
+          : null,
         pet.sleeping ? h('div', { className: 'dpo-guest-zzz' }, '💤') : null,
         h(RemoteClip, { assetRoot: pet.assetRoot, anim: pet.anim, fallback: pet.idle, width }),
         h('div', { className: 'dpo-guest-name' }, peer.name),
@@ -1037,6 +1116,7 @@ window.__ModuleLoader__.load({
       const bodies = useGuestBodies()
       const [menu, setMenu] = useState(null)
       const [submenu, setSubmenu] = useState(null)
+      const [compose, setCompose] = useState(null)
       const [toast, setToast] = useState('')
       const toastTimer = React.useRef(0)
       const playedMusicSeq = React.useRef(0)
@@ -1106,6 +1186,31 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const submitCompose = async () => {
+        if (!compose) return
+        const text = String(compose.value || '').trim()
+        if (text === '') return
+        const peer = compose.peer
+        const kind = compose.kind
+        setCompose(null)
+        if (kind === 'note') {
+          await sendIntent(peer, 'visit-note', text.slice(0, 40))
+          return
+        }
+        try {
+          const res = await fetch(BASE + '/chat', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ to: peer.deviceId, text: text.slice(0, 120), raw: kind === 'raw' }),
+          })
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok || data.ok !== true) showToast(reasonText(data.reason || 'chat-failed'))
+          else showToast(kind === 'ai' ? '已发给对方桌宠，等它回复' : '消息已送达')
+        } catch {
+          showToast('发送失败：中继没有连上')
+        }
+      }
+
       const pick = async (item) => {
         const peer = menu
         if (!peer) return
@@ -1120,34 +1225,13 @@ window.__ModuleLoader__.load({
         setMenu(null)
         setSubmenu(null)
         if (item.intent === 'music') return shareMusic(peer.peer)
+        // 不用 window.prompt：DSH 桌面壳（Electron）里 prompt 被禁用，会直接报错/无反应。
         if (item.intent === 'visit-note') {
-          const note = window.prompt('给 ' + peer.peer.name + ' 留句话（40 字以内）', '')
-          if (note === null) return
-          const trimmed = note.trim().slice(0, 40)
-          if (trimmed !== '') await sendIntent(peer.peer, 'visit-note', trimmed)
+          setCompose({ peer: peer.peer, kind: 'note', value: '' })
           return
         }
         if (item.intent === 'chat-raw' || item.intent === 'chat-ai') {
-          const ai = item.intent === 'chat-ai'
-          const text = window.prompt(
-            (ai ? '让 ' + peer.peer.name + ' 的桌宠回你（会调用它的模型）' : '给 ' + peer.peer.name + ' 发条消息（直接送达，不经过模型）') + '：',
-            '',
-          )
-          if (text === null) return
-          const trimmed = text.trim().slice(0, 120)
-          if (trimmed === '') return
-          try {
-            const res = await fetch(BASE + '/chat', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ to: peer.peer.deviceId, text: trimmed, raw: !ai }),
-            })
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok || data.ok !== true) showToast(reasonText(data.reason || 'chat-failed'))
-            else showToast(ai ? '已发给对方桌宠，等它回复' : '消息已送达')
-          } catch {
-            showToast('发送失败：中继没有连上')
-          }
+          setCompose({ peer: peer.peer, kind: item.intent === 'chat-ai' ? 'ai' : 'raw', value: '' })
           return
         }
         if (item.intent === 'action') return sendIntent(peer.peer, 'action', item.note)
@@ -1188,7 +1272,7 @@ window.__ModuleLoader__.load({
               }))),
             ]
           : guestMenu(menu.peer)
-      const hasContent = sprites.length > 0 || menu !== null || shared.title !== ''
+      const hasContent = sprites.length > 0 || menu !== null || shared.title !== '' || compose !== null
       return hasContent
         ? h(
             'div',
@@ -1220,6 +1304,56 @@ window.__ModuleLoader__.load({
                         item.label,
                       ),
                     ),
+                  ),
+                )
+              : null,
+            compose !== null
+              ? h(
+                  'div',
+                  {
+                    className: 'dpo-compose',
+                    onPointerDown: (e) => e.stopPropagation(),
+                    onContextMenu: (e) => e.preventDefault(),
+                  },
+                  h(
+                    'div',
+                    { className: 'dpo-compose-title' },
+                    compose.kind === 'note'
+                      ? '给 ' + compose.peer.name + ' 留句话'
+                      : compose.kind === 'ai'
+                        ? '让 ' + compose.peer.name + ' 的桌宠回你'
+                        : '给 ' + compose.peer.name + ' 发条消息',
+                  ),
+                  h('textarea', {
+                    className: 'dpo-compose-input',
+                    autoFocus: true,
+                    maxLength: compose.kind === 'note' ? 40 : 120,
+                    placeholder: compose.kind === 'ai' ? '它会用自己的模型人设回复' : '输入后按 Enter 发送，Shift+Enter 换行',
+                    value: compose.value,
+                    onChange: (e) => setCompose({ ...compose, value: e.target.value }),
+                    onKeyDown: (e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void submitCompose()
+                      } else if (e.key === 'Escape') {
+                        setCompose(null)
+                      }
+                    },
+                  }),
+                  h(
+                    'div',
+                    { className: 'dpo-compose-hint' },
+                    compose.kind === 'ai'
+                      ? '会调用对方桌宠的 LLM，回复显示在它的气泡里'
+                      : compose.kind === 'raw'
+                        ? '直接送达对方，不经过模型'
+                        : '对方宠物会冒泡读出来',
+                  ),
+                  h(
+                    'div',
+                    { className: 'dpo-compose-actions' },
+                    h('button', { className: 'dpo-btn', onClick: () => setCompose(null) }, '取消'),
+                    h('button', { className: 'dpo-btn primary', onClick: () => void submitCompose() }, '发送'),
                   ),
                 )
               : null,
