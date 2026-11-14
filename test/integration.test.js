@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import net from 'node:net'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 import { createOnlineService } from '../lib/service.js'
 import { createRelayServer } from '../relay/server.mjs'
@@ -326,6 +326,28 @@ test('端到端：一侧切歌，另一侧收到 music-sync 并交给本机音�
     await new Promise((r) => petB.server.close(r))
     relay.closeAllConnections?.()
     await new Promise((r) => relay.close(r))
+  }
+})
+
+test('端到端：中继地址填本机局域网 IP 也会自动起中继', async (t) => {
+  const lan = Object.values(networkInterfaces())
+    .flat()
+    .find((item) => item && item.family === 'IPv4' && item.internal === false)
+  if (!lan) {
+    t.skip('本机没有局域网 IPv4 地址')
+    return
+  }
+  const port = await freePort()
+  const pet = await fakePetServer('A 的鱼')
+  const service = await makeService(await mkdtemp(join(tmpdir(), 'dpo-lan-')), pet.origin, 'LAN', `ws://${lan.address}:${port}/ws`)
+  try {
+    await service.pair('LAN234')
+    const online = await waitUntil(() => service.snapshot().relay.status === 'online', 10_000)
+    assert.ok(online, 'relay URL 用本机局域网 IP 时也应该自动起本机中继')
+  } finally {
+    service.stop()
+    pet.server.closeAllConnections?.()
+    await new Promise((r) => pet.server.close(r))
   }
 })
 
