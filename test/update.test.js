@@ -58,7 +58,8 @@ test('更新检查：HTML/atom 失败后回退 API', async () => {
       return { ok: true, json: async () => ({ tag_name: 'v0.6.0' }) }
     },
   })
-  assert.equal(release.tag, '0.6.0')
+  // API 的 tag 必须原样保留 v 前缀，否则下载地址会拼成 /releases/download/0.6.0/... 而 404
+  assert.equal(release.tag, 'v0.6.0')
   assert.equal(release.source, 'api')
   assert.ok(urls.some((url) => url.includes('releases.atom')))
   assert.ok(urls.some((url) => url.includes('api.github.com')))

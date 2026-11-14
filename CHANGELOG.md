@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.5
+
+- 修复「一键更新」必然失败：更新检查的 API 兜底分支把 `tag_name` 的 `v` 前缀 normalize 掉了，下载地址被拼成 `/releases/download/0.8.4/…`，GitHub 直接 404；现在原样保留 tag（带 `v`）。
+- 一键更新优先走 GitHub API 资产端点（`Accept: application/octet-stream`），而不是国内网络常被 `ECONNRESET` 的 `github.com/.../releases/download/...` 直链；直链只作最后兜底，tag 带不带 `v` 两种写法都会尝试。
+- 新增回归测试：API tag 必须保留 `v`；直链被重置时能回退资产端点并完成安装（38 个测试）。
+
 ## 0.8.4
 
 - 修复联机投影的对方宠物「气泡只剩文字、看不到白色气泡框」：气泡原来用 `--dsw-alias-bg-base` 当底色，深色主题下这个变量就是页面底色，气泡框和背景融为一体。现在气泡固定白底深字，并补上小尖角和 `z-index`，宽屏/长文本会自动换行。

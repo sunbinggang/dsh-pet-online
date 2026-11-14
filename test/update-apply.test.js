@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -89,4 +89,60 @@ test('一键更新：已是最新时拒绝；无 tgz 资产时拒绝', async () 
   assert.equal(noAsset.ok, false)
   assert.equal(noAsset.reason, 'no-tgz-asset')
   assert.ok(calls.some((url) => url.includes('/releases/download/v0.6.0/')))
+})
+
+test('一键更新：直链被重置时回退 API 资产端点下载', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'dpo-root-'))
+  const backupRoot = await mkdtemp(join(tmpdir(), 'dpo-backup-'))
+  const gz = gzipSync(
+    makeTar([
+      { name: 'package/package.json', content: '{"name":"dsh-pet-online","version":"0.6.0"}' },
+      { name: 'package/lib/service.js', content: 'export {}' },
+    ]),
+  )
+  const calls = []
+  const result = await applyUpdate({
+    currentVersion: '0.5.0',
+    repo: 'owner/repo',
+    rootDir,
+    backupRoot,
+    fetchImpl: async (url) => {
+      calls.push(url)
+      if (url.includes('/releases/latest')) {
+        return {
+          status: 302,
+          ok: false,
+          headers: { get: () => 'https://github.com/owner/repo/releases/tag/v0.6.0' },
+        }
+      }
+      if (url.includes('/releases/download/')) throw new Error('fetch failed')
+      if (url.includes('/releases/tags/')) {
+        return {
+          ok: true,
+          json: async () => ({
+            tag_name: 'v0.6.0',
+            assets: [
+              {
+                name: 'dsh-pet-online-0.6.0.tgz',
+                url: 'https://api.github.com/repos/owner/repo/releases/assets/42',
+                browser_download_url: 'https://github.com/owner/repo/releases/download/v0.6.0/dsh-pet-online-0.6.0.tgz',
+              },
+            ],
+          }),
+        }
+      }
+      if (url.endsWith('/releases/assets/42')) {
+        return { ok: true, arrayBuffer: async () => gz.buffer.slice(gz.byteOffset, gz.byteOffset + gz.byteLength) }
+      }
+      throw new Error('unexpected ' + url)
+    },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.updatedTo, '0.6.0')
+  assert.equal(result.restartRequired, true)
+  assert.ok(calls.some((url) => url.endsWith('/releases/assets/42')))
+  assert.equal(await readFile(join(rootDir, 'package.json'), 'utf8'), '{"name":"dsh-pet-online","version":"0.6.0"}')
+  assert.ok((await stat(join(rootDir, 'lib/service.js'))).isFile())
+  assert.ok((await stat(result.backup)).isDirectory())
 })
