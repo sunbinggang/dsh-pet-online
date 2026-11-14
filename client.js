@@ -96,6 +96,7 @@ window.__ModuleLoader__.load({
       const [accept, setAccept] = useState(true)
       const [share, setShare] = useState(true)
       const [acceptChat, setAcceptChat] = useState(true)
+      const [updateCheckOn, setUpdateCheckOn] = useState(true)
       const [relayUrlInput, setRelayUrlInput] = useState('')
 
       useEffect(() => {
@@ -109,7 +110,8 @@ window.__ModuleLoader__.load({
         setAccept(snap.config.acceptInteractions !== false)
         setShare(snap.config.shareBubbles !== false)
         setAcceptChat(snap.config.acceptChat !== false)
-      }, [snap && snap.config && snap.config.acceptInteractions, snap && snap.config && snap.config.shareBubbles, snap && snap.config && snap.config.acceptChat])
+        setUpdateCheckOn(snap.config.updateCheck !== false)
+      }, [snap && snap.config && snap.config.acceptInteractions, snap && snap.config && snap.config.shareBubbles, snap && snap.config && snap.config.acceptChat, snap && snap.config && snap.config.updateCheck])
 
       const toast = (text) => {
         const id = Date.now() + Math.random()
@@ -157,6 +159,9 @@ window.__ModuleLoader__.load({
 
       const save = (patch) =>
         run(() => getJson('/config', { method: 'POST', body: JSON.stringify(patch) }), '设置已保存')
+
+      const checkUpdate = () =>
+        run(() => getJson('/update/check', { method: 'POST', body: '{}' }), '已检查更新')
 
       const interact = (peer, intent, note) =>
         run(
@@ -320,6 +325,49 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dpo-card' },
+          h('div', { className: 'dpo-title' }, '版本与更新'),
+          h(
+            'div',
+            { className: 'dpo-row' },
+            h('span', { className: 'dpo-muted' }, '当前 v' + (snap.pluginVersion || '?')),
+            snap.update && snap.update.latest
+              ? h(
+                  'span',
+                  { className: snap.update.hasUpdate ? 'dpo-err' : 'dpo-muted' },
+                  (snap.update.hasUpdate ? '发现新版本 v' : '最新 v') + snap.update.latest,
+                )
+              : h('span', { className: 'dpo-muted' }, '尚未检查'),
+            snap.update && snap.update.error
+              ? h('span', { className: 'dpo-muted' }, '（检查失败：' + snap.update.error + '）')
+              : null,
+          ),
+          h(
+            'div',
+            { className: 'dpo-row', style: { marginTop: 8 } },
+            h('button', { className: 'dpo-btn', disabled: busy, onClick: checkUpdate }, '检查更新'),
+            snap.update && snap.update.hasUpdate && snap.update.url
+              ? h(
+                  'a',
+                  {
+                    className: 'dpo-btn primary',
+                    href: snap.update.url,
+                    target: '_blank',
+                    rel: 'noreferrer',
+                    style: { textDecoration: 'none' },
+                  },
+                  '去下载',
+                )
+              : null,
+          ),
+          h(
+            'div',
+            { className: 'dpo-muted', style: { marginTop: 6 } },
+            '更新包从 GitHub Release 下载；装好后重启 DSH 生效。每 6 小时自动检查一次。',
+          ),
+        ),
+        h(
+          'div',
+          { className: 'dpo-card' },
           h('div', { className: 'dpo-title' }, '偏好'),
           h(
             'div',
@@ -330,6 +378,23 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dpo-row' },
             h('label', { className: 'dpo-row' }, h('input', { type: 'checkbox', checked: share, onChange: (e) => { setShare(e.target.checked); save({ shareBubbles: e.target.checked }) } }), '向联机设备共享宠物气泡文字'),
+          ),
+          h(
+            'div',
+            { className: 'dpo-row' },
+            h(
+              'label',
+              { className: 'dpo-row' },
+              h('input', {
+                type: 'checkbox',
+                checked: updateCheckOn,
+                onChange: (e) => {
+                  setUpdateCheckOn(e.target.checked)
+                  save({ updateCheck: e.target.checked })
+                },
+              }),
+              '自动检查更新（GitHub Release，每 6 小时）',
+            ),
           ),
           h('div', { className: 'dpo-muted', style: { marginTop: 8 } }, '联机数据只含宠物名、大小、动作与气泡；不含对话记忆、文件或账号信息。'),
           h(

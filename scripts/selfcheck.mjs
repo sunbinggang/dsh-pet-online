@@ -88,7 +88,7 @@ function fakeCtx(origin) {
 async function makeService(home, origin, nickname, relayUrl) {
   process.env.DSH_HOME = home
   await mkdir(join(home, 'dsh-pet-online'), { recursive: true })
-  await writeFile(join(home, 'dsh-pet-online', 'config.json'), JSON.stringify({ enabled: true }), 'utf8')
+  await writeFile(join(home, 'dsh-pet-online', 'config.json'), JSON.stringify({ enabled: true, updateCheck: false }), 'utf8')
   const service = createOnlineService(fakeCtx(origin))
   service.start()
   await waitUntil(() => service.deviceId !== '')
@@ -161,3 +161,4 @@ main().catch((error) => {
   console.error('自检异常：', error)
   process.exitCode = 1
 })
+

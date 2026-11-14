@@ -69,7 +69,7 @@ async function main() {
   const home = await mkdtemp(join(tmpdir(), 'dpo-live-'))
   process.env.DSH_HOME = home
   await mkdir(join(home, 'dsh-pet-online'), { recursive: true })
-  await writeFile(join(home, 'dsh-pet-online', 'config.json'), JSON.stringify({ enabled: true }), 'utf8')
+  await writeFile(join(home, 'dsh-pet-online', 'config.json'), JSON.stringify({ enabled: true, updateCheck: false }), 'utf8')
 
   log('▶ 用新代码起联机实例，对接真实 dsh-pet @ ' + origin)
   const service = createOnlineService({
@@ -144,3 +144,4 @@ main().catch((error) => {
   console.error('真机自检异常：', error)
   process.exitCode = 1
 })
+

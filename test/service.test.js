@@ -98,7 +98,7 @@ test('宿主半侧：apply 注册路由，ping/state/config/pairing 可用', asy
   process.env.DSH_HOME = home
   // 关掉 relay，避免测试里反复重连
   await mkdir(join(home, 'dsh-pet-online'), { recursive: true })
-  await writeFile(join(home, 'dsh-pet-online', 'config.json'), JSON.stringify({ enabled: false }), 'utf8')
+  await writeFile(join(home, 'dsh-pet-online', 'config.json'), JSON.stringify({ enabled: false, updateCheck: false }), 'utf8')
 
   const ctx = fakeCtx(origin)
   apply(ctx)
@@ -128,6 +128,12 @@ test('宿主半侧：apply 注册路由，ping/state/config/pairing 可用', asy
   assert.equal(events.json.ok, true)
   assert.equal(typeof events.json.version, 'number')
   assert.deepEqual(events.json.peers, [])
+
+  assert.equal(typeof state.json.pluginVersion, 'string')
+  assert.ok(state.json.pluginVersion.length > 0)
+  if (state.json.update !== null) {
+    assert.equal(state.json.update.current, state.json.pluginVersion)
+  }
 
   const pairing = await call('POST', '/dsh-pet-online/pairing/new', {})
   assert.equal(pairing.status, 200)
