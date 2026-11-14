@@ -133,3 +133,12 @@ test('浏览器半侧：留言/聊天用自带输入框，不依赖 window.promp
   assert.match(source, /dpo-compose/)
   assert.match(source, /submitCompose/)
 })
+
+test('浏览器半侧：播放同一首要保住用户手势，不能只发请求等轮询', async () => {
+  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  // 回归：只 POST /music/play 的话，真正的 audio.play() 发生在轮询回调里，会被浏览器自动播放策略拦下。
+  assert.match(source, /playMusicShare\s*=\s*\(item\)/, 'play button must pass the full share item')
+  assert.match(source, /playSharedFromGesture\(item\.track/, 'play button must start playback inside the click gesture')
+  assert.match(source, /function unlockSharedAudio\(\)/, 'need a gesture-time audio unlock')
+  assert.match(source, /armMusicUnlockRetry/, 'blocked autoplay needs a pointerdown retry')
+})

@@ -92,6 +92,9 @@ window.__ModuleLoader__.load({
         .replace(/[\s_\-()[\]（）【】·]/g, '')
 
     let sharedAudio = null
+    let lastDirectMusicAt = 0
+    let pendingMusic = null
+    let musicUnlockArmed = false
     let sharedState = { seq: 0, playing: false, title: '', fromName: '', error: '', blocked: false, track: null }
     const sharedListeners = new Set()
     function sharedSet(patch) {
@@ -108,6 +111,7 @@ window.__ModuleLoader__.load({
       return state
     }
     function stopSharedMusic() {
+      pendingMusic = null
       if (sharedAudio) {
         try {
           sharedAudio.pause()
@@ -118,6 +122,46 @@ window.__ModuleLoader__.load({
         }
       }
       sharedSet({ playing: false, blocked: false })
+    }
+
+    /** 在用户点击/勾选这类手势里放一段静音，解锁本页的 HTMLAudio 自动播放权限。 */
+    function unlockSharedAudio() {
+      try {
+        if (sharedAudio === null) sharedAudio = new Audio()
+        sharedAudio.volume = 0
+        sharedAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
+        const played = sharedAudio.play()
+        if (played && typeof played.then === 'function') {
+          played
+            .then(() => {
+              try {
+                sharedAudio.pause()
+                sharedAudio.removeAttribute('src')
+                sharedAudio.load()
+                sharedAudio.volume = 1
+              } catch {
+                /* ignore */
+              }
+            })
+            .catch(() => {})
+        }
+      } catch {
+        /* 解锁失败也不影响手动播放 */
+      }
+    }
+
+    /** 被自动播放策略拦下时，等用户下一次点页面（真实手势）再重试同一首。 */
+    function armMusicUnlockRetry() {
+      if (musicUnlockArmed) return
+      musicUnlockArmed = true
+      const retry = () => {
+        document.removeEventListener('pointerdown', retry, true)
+        musicUnlockArmed = false
+        const pending = pendingMusic
+        pendingMusic = null
+        if (pending) void playSharedTrack(pending.track, pending.fromName)
+      }
+      document.addEventListener('pointerdown', retry, true)
     }
 
     async function resolveSharedSource(track) {
@@ -169,8 +213,16 @@ window.__ModuleLoader__.load({
         await sharedAudio.play()
         sharedSet({ playing: true, blocked: false })
       } catch (error) {
-        sharedSet({ playing: false, blocked: true, error: '浏览器拦截了自动播放，点「播放」继续' })
+        pendingMusic = { track, fromName }
+        armMusicUnlockRetry()
+        sharedSet({ playing: false, blocked: true, error: '浏览器拦截了自动播放，点页面任意位置继续' })
       }
+    }
+
+    /** 面板按钮里直接播放：保留用户手势，避免「点按钮只发请求、真正播放时被浏览器拦截」。 */
+    function playSharedFromGesture(track, fromName) {
+      lastDirectMusicAt = Date.now()
+      return playSharedTrack(track, fromName)
     }
 
     function useSnapshot() {
@@ -379,11 +431,15 @@ window.__ModuleLoader__.load({
         )
       }
 
-      const playMusicShare = (seq) =>
-        run(
-          () => getJson('/music/play', { method: 'POST', body: JSON.stringify({ seq }) }),
+      const playMusicShare = (item) => {
+        // 关键：必须在这次点击的手势里真正调用 audio.play()。
+        // 只 POST /music/play 的话，播放发生在后续轮询回调里，会被浏览器自动播放策略拦掉。
+        void playSharedFromGesture(item.track, item.fromName)
+        return run(
+          () => getJson('/music/play', { method: 'POST', body: JSON.stringify({ seq: item.seq }) }),
           '已请求播放同一首',
         )
+      }
 
       if (snap === null && error === null) return h('div', { className: 'dpo-wrap' }, h('div', { className: 'dpo-muted' }, '正在读取联机状态…'))
       if (snap && snap.ok === false) {
@@ -598,7 +654,7 @@ window.__ModuleLoader__.load({
                     { className: 'dpo-muted' },
                     item.fromName + ' 分享了《' + item.track.name + (item.track.artists && item.track.artists.length > 0 ? ' - ' + item.track.artists.join('/') : '') + '》',
                   ),
-                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => playMusicShare(item.seq) }, '播放同一首'),
+                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => playMusicShare(item) }, '播放同一首'),
                 ),
               ),
           h(
@@ -612,6 +668,8 @@ window.__ModuleLoader__.load({
                 checked: acceptRemoteMusic,
                 onChange: (e) => {
                   setAcceptRemoteMusic(e.target.checked)
+                  // 勾选本身就是用户手势：顺手解锁自动播放，之后对方分享才能自动响。
+                  if (e.target.checked) unlockSharedAudio()
                   save({ acceptRemoteMusic: e.target.checked })
                 },
               }),
@@ -1185,8 +1243,17 @@ window.__ModuleLoader__.load({
         if (!music || !music.track || typeof music.seq !== 'number') return
         if (playedMusicSeq.current >= music.seq) return
         playedMusicSeq.current = music.seq
+        // 面板按钮已经在这个手势里播了同一首，轮询回来的同一条请求不再打断重播。
+        if (Date.now() - lastDirectMusicAt < 5000) return
         void playSharedTrack(music.track, music.fromName)
       }, [snap && snap.music && snap.music.seq])
+
+      // 页面里第一次点击时顺手解锁音频：之后即使是对端自动推来的歌也能直接响。
+      React.useEffect(() => {
+        const unlock = () => unlockSharedAudio()
+        document.addEventListener('pointerdown', unlock, { capture: true, once: true })
+        return () => document.removeEventListener('pointerdown', unlock, true)
+      }, [])
 
       // 对方回执失败时把原因亮出来（例如「对方宠物睡着了」）
       React.useEffect(() => {
