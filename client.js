@@ -15,12 +15,15 @@ window.__ModuleLoader__.load({
 
     const CSS = [
       '.dpo-wrap{display:flex;flex-direction:column;gap:14px;font-size:13px}',
-      '.dpo-card{border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.25));border-radius:12px;padding:14px 16px;background:var(--dsw-alias-bg-layer-1,rgba(15,23,42,.35))}',
+      '.dpo-card{border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.25));border-radius:12px;padding:14px 16px;background:var(--dsw-alias-bg-layer-1,rgba(15,23,42,.35));color:var(--dsw-alias-label-primary,#e2e8f0)}',
       '.dpo-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       '.dpo-title{font-weight:600;font-size:14px;margin-bottom:6px}',
       '.dpo-muted{color:var(--dsw-alias-label-secondary,#94a3b8);font-size:12px}',
       '.dpo-btn{border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));background:transparent;color:inherit;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}',
       '.dpo-btn.primary{background:var(--dsw-alias-brand-primary,#2f6df6);color:#fff;border-color:transparent}',
+      '.dpo-btn.primary:hover,.dpo-btn.primary:visited{color:#fff}',
+      'a.dpo-btn{text-decoration:none}',
+      '.dpo-btn[disabled]{opacity:.55;cursor:not-allowed}',
       '.dpo-input{border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));background:var(--dsw-alias-bg-base,transparent);color:inherit;border-radius:8px;padding:4px 8px;font-size:12px;width:140px;letter-spacing:2px;text-transform:uppercase}',
       '.dpo-code{font-family:ui-monospace,Consolas,monospace;font-size:20px;letter-spacing:6px;font-weight:700}',
       '.dpo-peer{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.22))}',
@@ -168,6 +171,26 @@ window.__ModuleLoader__.load({
 
       const checkUpdate = () =>
         run(() => getJson('/update/check', { method: 'POST', body: '{}' }), '已检查更新')
+
+      const [applying, setApplying] = useState(false)
+      const applyUpdateNow = async () => {
+        setApplying(true)
+        setNotice('')
+        try {
+          const res = await getJson('/update/apply', { method: 'POST', body: '{}' })
+          if (res && res.ok) {
+            setNotice('已更新到 v' + res.updatedTo + '（备份在 ' + res.backup + '），重启 DSH 生效')
+            toast('更新完成，重启 DSH 生效')
+          } else {
+            setNotice('更新失败：' + ((res && res.reason) || '未知原因'))
+            toast('更新失败')
+          }
+        } catch (e) {
+          setNotice('更新失败：' + String(e && e.message ? e.message : e))
+        } finally {
+          setApplying(false)
+        }
+      }
 
       const interact = (peer, intent, note) =>
         run(
@@ -351,15 +374,21 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dpo-row', style: { marginTop: 8 } },
             h('button', { className: 'dpo-btn', disabled: busy, onClick: checkUpdate }, '检查更新'),
+            snap.update && snap.update.hasUpdate
+              ? h(
+                  'button',
+                  { className: 'dpo-btn primary', disabled: busy || applying, onClick: applyUpdateNow },
+                  applying ? '更新中…' : '一键更新',
+                )
+              : null,
             snap.update && snap.update.hasUpdate && snap.update.url
               ? h(
                   'a',
                   {
-                    className: 'dpo-btn primary',
+                    className: 'dpo-btn',
                     href: snap.update.url,
                     target: '_blank',
                     rel: 'noreferrer',
-                    style: { textDecoration: 'none' },
                   },
                   '去下载',
                 )

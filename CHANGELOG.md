@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- 一键更新：面板「一键更新」直接下载 Release 的 tgz、解包并覆盖本包目录，覆盖前自动备份到 `$DSH_HOME/dsh-pet-online/backups/`，完成后提示重启 DSH。
+  - 下载优先走 GitHub API 资产端点（`Accept: application/octet-stream`），部分网络下 `github.com` 直链不可达时的兜底；解包拒绝绝对路径/`..`，总量上限 40 MB。
+  - 新增 `POST /dsh-pet-online/update/apply`；已是最新或没有 tgz 资产会明确返回原因。
+- 修面板「检查更新」一带白字白底：卡片/按钮显式设文字色，主按钮固定白字蓝底，链接按钮不再继承异常颜色。
+- 测试增至 23 个（tar 解析、路径穿越拒绝、tgz 解包、一键更新拒绝路径）。
+
 ## 0.6.0
 
 - 访客宠物右键菜单：打招呼 / 投喂零食 / 摸摸头 / 戳一下 / 抱抱 / 共享当前音乐 / 留言。
