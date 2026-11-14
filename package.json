@@ -1,6 +1,6 @@
 {
   "name": "dsh-pet-online",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "给 dsh-pet 桌宠加在线联机：多台机器配对后互相看见、互动、纯文字/AI 聊天，还能把当前音乐共享给对方并播放同一首。不改 dsh-pet 源码，只走它公开的 /dsh-pet-7340 路由。",
   "type": "module",
   "main": "lib/index.js",

@@ -43,7 +43,9 @@ window.__ModuleLoader__.load({
       '.dpo-chat-input{flex:1 1 160px;min-width:120px;border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));background:var(--dsw-alias-bg-base,transparent);color:inherit;border-radius:8px;padding:4px 8px;font-size:12px}',
       '.dpo-guest{position:absolute;left:0;top:0;display:flex;flex-direction:column;align-items:center;will-change:transform;touch-action:none}',
       '.dpo-guest video{display:block;pointer-events:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.18))}',
-      '.dpo-guest-bubble{position:absolute;bottom:100%;margin-bottom:6px;max-width:220px;padding:5px 10px;border-radius:10px;background:var(--dsw-alias-bg-base,#fff);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));color:var(--dsw-alias-label-primary,#111);font-size:12px;line-height:1.35;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.12)}',
+      // 气泡固定用白底深字：不能再取 --dsw-alias-bg-base（深色主题下它就是页面底色，气泡会整块“隐形”只剩文字）。
+      '.dpo-guest-bubble{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);z-index:3;margin-bottom:8px;max-width:240px;padding:6px 11px;border-radius:11px;background:#fff;border:1px solid rgba(148,163,184,.45);color:#1f2937;font-size:12px;line-height:1.4;text-align:center;white-space:pre-wrap;word-break:break-word;box-shadow:0 6px 18px rgba(0,0,0,.22);pointer-events:none}',
+      ".dpo-guest-bubble::after{content:'';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);border:6px solid transparent;border-top-color:#fff;border-bottom:0}",
       '.dpo-guest-name{margin-top:4px;padding:1px 8px;border-radius:9px;background:rgba(15,23,42,.45);color:#e2e8f0;font-size:11px;white-space:nowrap}',
       '.dpo-guest.dpo-sleeping{opacity:.55}',
       '.dpo-guest-zzz{font-size:12px;color:#94a3b8}',

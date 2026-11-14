@@ -110,4 +110,12 @@ test('浏览器半侧：模块契约与两个插槽注册', async () => {
     const end = css.indexOf('}', start)
     assert.match(css.slice(start, end), /pointer-events:auto/, selector + ' needs pointer-events:auto')
   }
+
+  // 回归：访客气泡必须自带白底深字，不能继承主题的页面底色（深色主题下会和背景融为一体，只剩文字）。
+  const bubbleStart = css.indexOf('.dpo-guest-bubble{')
+  assert.ok(bubbleStart >= 0, 'missing .dpo-guest-bubble')
+  const bubbleRule = css.slice(bubbleStart, css.indexOf('}', bubbleStart))
+  assert.match(bubbleRule, /background:#fff/, 'guest bubble needs an explicit white background')
+  assert.match(bubbleRule, /color:#1f2937/, 'guest bubble needs an explicit dark text color')
+  assert.doesNotMatch(bubbleRule, /--dsw-alias-bg-base/, 'guest bubble must not inherit the page background')
 })
