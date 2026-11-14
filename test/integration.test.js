@@ -326,3 +326,56 @@ test('端到端：对方专注会话中时互动降级为仅气泡', async () =>
   relay.closeAllConnections?.()
   await new Promise((r) => relay.close(r))
 })
+
+test('端到端：三人同房间互相可见，群发互动和群发文字命中所有人', async () => {
+  const relay = createRelayServer()
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve))
+  const relayUrl = `ws://127.0.0.1:${relay.address().port}/ws`
+
+  const petA = await fakePetServer('A 的鱼')
+  const petB = await fakePetServer('B 的鱼')
+  const petC = await fakePetServer('C 的鱼')
+  const a = await makeService(await mkdtemp(join(tmpdir(), 'dpo-m1-')), petA.origin, 'M1', relayUrl)
+  const b = await makeService(await mkdtemp(join(tmpdir(), 'dpo-m2-')), petB.origin, 'M2', relayUrl)
+  const c = await makeService(await mkdtemp(join(tmpdir(), 'dpo-m3-')), petC.origin, 'M3', relayUrl)
+
+  try {
+    for (const service of [a, b, c]) await service.pair('MULT23')
+    await waitUntil(() => [a, b, c].every((service) => service.snapshot().relay.status === 'online'))
+    await waitUntil(() =>
+      [a, b, c].every(
+        (service) =>
+          service.snapshot().peers.length === 2 && service.snapshot().peers.every((p) => p.pets.length === 1),
+      ),
+    )
+    await waitUntil(() => {
+      const names = a.snapshot().peers.map((p) => p.pets[0]?.name).sort()
+      return names.includes('B 的鱼') && names.includes('C 的鱼')
+    })
+    assert.deepEqual(a.snapshot().room, { members: 3, capacity: 8 })
+
+    const wave = await a.interactAll({ intent: 'wave' })
+    assert.equal(wave.ok, true)
+    assert.equal(wave.sent, 2)
+    await waitUntil(() => petB.calls.find((call) => call.path === '/dsh-pet-7340/anim'))
+    await waitUntil(() => petC.calls.find((call) => call.path === '/dsh-pet-7340/anim'))
+
+    const chat = await a.chatAll({ text: '大家好呀', raw: true })
+    assert.equal(chat.ok, true)
+    assert.equal(chat.sent, 2)
+    await waitUntil(() => (b.snapshot().chats[a.deviceId] ?? []).find((m) => m.text === '大家好呀'))
+    await waitUntil(() => (c.snapshot().chats[a.deviceId] ?? []).find((m) => m.text === '大家好呀'))
+    await waitUntil(() => petB.calls.find((call) => call.path === '/dsh-pet-7340/broadcast'))
+    await waitUntil(() => petC.calls.find((call) => call.path === '/dsh-pet-7340/broadcast'))
+  } finally {
+    a.stop()
+    b.stop()
+    c.stop()
+    for (const pet of [petA, petB, petC]) {
+      pet.server.closeAllConnections?.()
+      await new Promise((r) => pet.server.close(r))
+    }
+    relay.closeAllConnections?.()
+    await new Promise((r) => relay.close(r))
+  }
+})

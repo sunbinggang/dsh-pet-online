@@ -303,11 +303,39 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const interact = (peer, intent, note) =>
+      const interact = (peer, intent, note, track) =>
         run(
-          () => getJson('/interact', { method: 'POST', body: JSON.stringify({ to: peer.deviceId, intent, note }) }),
+          () =>
+            getJson('/interact', {
+              method: 'POST',
+              body: JSON.stringify({ to: peer.deviceId, intent, note, ...(track ? { track } : {}) }),
+            }),
           '已向 ' + peer.name + ' 发起交互',
         )
+
+      // 多人联机：同一个动作一次发给房间里所有在线设备。
+      const interactAll = (intent, note, track) =>
+        run(
+          async () => {
+            const res = await getJson('/interact-all', {
+              method: 'POST',
+              body: JSON.stringify({ intent, note, ...(track ? { track } : {}) }),
+            })
+            if (res.ok) setNotice('已发给全房间 ' + res.sent + ' 台设备')
+            return res
+          },
+          '已向全房间发起交互',
+        )
+
+      const shareMusicAll = async () => {
+        const now = await getJson('/music/now')
+        if (!now || now.ok !== true || !now.track) {
+          toast('本机没有正在播放的音乐')
+          return
+        }
+        const artists = Array.isArray(now.track.artists) ? now.track.artists.join('/') : ''
+        await interactAll('music', now.track.name + (artists ? ' - ' + artists : ''), now.track)
+      }
 
       // 不用 window.prompt：DSH 桌面壳（Electron）里 prompt 被禁用，点了没反应。
       const openCompose = (peer, kind) => setCompose({ peer, kind, value: '' })
@@ -324,6 +352,13 @@ window.__ModuleLoader__.load({
           return
         }
         const limit = 500
+        if (peer.deviceId === '*') {
+          run(
+            () => getJson('/chat-all', { method: 'POST', body: JSON.stringify({ text: text.slice(0, limit), raw: true }) }),
+            '已发到全房间',
+          )
+          return
+        }
         run(
           () =>
             getJson('/chat', {
@@ -359,6 +394,7 @@ window.__ModuleLoader__.load({
       const relay = (snap && snap.relay) || {}
       const pairing = (snap && snap.pairing) || {}
       const online = relay.status === 'online'
+      const roomLabel = snap && snap.room ? snap.room.members + '/' + snap.room.capacity : String(peers.length + 1) + '/8'
 
       return h(
         'div',
@@ -411,7 +447,28 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dpo-card' },
-          h('div', { className: 'dpo-title' }, '在线设备（' + peers.length + '）'),
+          h(
+            'div',
+            { className: 'dpo-title' },
+            '在线设备（' + peers.length + '）' + (pairing.code ? ' · 房间 ' + roomLabel + ' 人' : ''),
+          ),
+          peers.length > 0
+            ? h(
+                'div',
+                { className: 'dpo-row', style: { marginBottom: 8 } },
+                h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interactAll('wave') }, '向全房间打招呼'),
+                h('button', { className: 'dpo-btn', disabled: busy, onClick: shareMusicAll }, '共享音乐给全房间'),
+                h(
+                  'button',
+                  {
+                    className: 'dpo-btn',
+                    disabled: busy,
+                    onClick: () => openCompose({ deviceId: '*', name: '全房间' }, 'raw'),
+                  },
+                  '向全房间发文字',
+                ),
+              )
+            : null,
           peers.length === 0
             ? h('div', { className: 'dpo-muted' }, '还没有设备在同一房间。让对方输入你上面的配对码，或输入对方的配对码。')
             : peers.map((peer) =>
