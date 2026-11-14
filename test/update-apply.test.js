@@ -56,28 +56,37 @@ test('tgz 解包到临时目录', async () => {
 })
 
 test('一键更新：已是最新时拒绝；无 tgz 资产时拒绝', async () => {
-  const calls = []
+  const html = (tag) => ({
+    status: 302,
+    ok: false,
+    headers: { get: () => `https://github.com/owner/repo/releases/tag/${tag}` },
+  })
+
   const already = await applyUpdate({
     currentVersion: '0.6.0',
     repo: 'owner/repo',
     rootDir: '/tmp/never',
     backupRoot: '/tmp/never-backup',
-    fetchImpl: async (url) => {
-      calls.push(url)
-      return { ok: true, json: async () => ({ tag_name: 'v0.6.0', assets: [] }) }
-    },
+    fetchImpl: async () => html('v0.6.0'),
   })
   assert.equal(already.ok, false)
   assert.equal(already.reason, 'already-latest')
 
+  const calls = []
   const noAsset = await applyUpdate({
     currentVersion: '0.5.0',
     repo: 'owner/repo',
     rootDir: '/tmp/never',
     backupRoot: '/tmp/never-backup',
-    fetchImpl: async () => ({ ok: true, json: async () => ({ tag_name: 'v0.6.0', assets: [] }) }),
+    fetchImpl: async (url) => {
+      calls.push(url)
+      if (url.includes('/releases/latest')) return html('v0.6.0')
+      if (url.includes('/releases/download/')) return { ok: false, status: 404 }
+      if (url.includes('/releases/tags/')) return { ok: true, json: async () => ({ tag_name: 'v0.6.0', assets: [] }) }
+      throw new Error('unexpected ' + url)
+    },
   })
   assert.equal(noAsset.ok, false)
   assert.equal(noAsset.reason, 'no-tgz-asset')
-  assert.ok(calls.length > 0)
+  assert.ok(calls.some((url) => url.includes('/releases/download/v0.6.0/')))
 })

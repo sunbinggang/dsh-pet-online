@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- 修复更新检查失败 `HTTP 403`：`api.github.com` 对未登录请求按出口 IP 限流，很容易整段共享 IP 被拒。改为优先读 `https://github.com/<repo>/releases/latest` 的 302 `Location`，其次 `releases.atom`，API 只作最后兜底。
+- 一键更新同步去掉对 API 的依赖：按约定资产名 `dsh-pet-online-<版本>.tgz` 直接走 `releases/download/<tag>/...` 下载，失败才回退 API 资产列表。
+- 新增 tag 解析（Location/atom）与「全通道 403」测试，测试增至 33 个。
+
 ## 0.8.0
 
 - 音乐共享升级为「播放同一首」：共享时连同曲目 id/歌名/歌手/来源一起发给对端；对端勾选「允许对方让我播放同一首」后自动播，未勾选时面板出现手动「播放同一首」按钮。播放端按歌名在本机 `/dsh-music/manifest` 找同名曲目（歌手需出现在 path），找不到再按来源走 `/dsh-music/nc|qq|kg/play/<id>`，都没有则提示；浏览器拦截自动播放时给重试按钮。
