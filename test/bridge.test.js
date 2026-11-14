@@ -100,10 +100,57 @@ test('bridge：localPets 展开条目树并带 assetRoot', async () => {
   assert.equal(pets[0].id, 'main')
   assert.equal(pets[0].assetRoot, 'main')
   assert.equal(pets[0].idle, '待机呼吸休闲')
+  assert.ok(pets[0].actions.includes('吃白饭'))
   assert.ok(pools.click.includes('点击回应-开心跃动'))
   assert.ok(pools.eat.includes('吃白饭'))
   await new Promise((r) => {
     server.closeAllConnections?.()
     server.close(r)
   })
+})
+
+test('bridge：睡觉/叫醒/动作意图落到 dsh-pet 对应端点', async () => {
+  const { server, calls } = await fakePetServer()
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    const slept = await bridge.applyIntent('sleep', { anim: null, text: '{from} 哄你睡觉' }, { from: '小鱼' })
+    assert.equal(slept.ok, true)
+    assert.ok(calls.some((c) => c.method === 'POST' && c.path === '/dsh-pet-7340/sleep'))
+
+    calls.length = 0
+    const woke = await bridge.applyIntent('wake', { anim: null, text: '{from} 叫醒你啦' }, { from: '小鱼' })
+    assert.equal(woke.ok, true)
+    assert.ok(calls.some((c) => c.path === '/dsh-pet-7340/wake'))
+
+    calls.length = 0
+    const played = await bridge.applyIntent('action', { anim: null, text: '{from} 让宠物表演了「{note}」' }, { from: '小鱼', note: '吃白饭' })
+    assert.equal(played.ok, true)
+    assert.ok(calls.some((c) => c.path === '/dsh-pet-7340/anim'))
+
+    calls.length = 0
+    const rejected = await bridge.applyIntent('action', { anim: null, text: 'x' }, { from: '小鱼', note: '不存在的动作' })
+    assert.equal(rejected.ok, false)
+    assert.equal(rejected.reason, 'unknown-animation')
+    assert.equal(calls.some((c) => c.path === '/dsh-pet-7340/anim'), false)
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
+})
+
+test('bridge：bubbleOnly 时睡觉也只弹气泡', async () => {
+  const { server, calls } = await fakePetServer()
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    const result = await bridge.applyIntent('sleep', { anim: null, text: '{from} 哄你睡觉' }, { from: '小鱼' }, { bubbleOnly: true })
+    assert.equal(result.ok, true)
+    assert.deepEqual(calls.map((c) => c.path), ['/dsh-pet-7340/broadcast'])
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
 })

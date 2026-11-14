@@ -2,22 +2,22 @@
 
 给 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 桌宠加一层**在线联机**：两台（或多台）装了 DSH 的机器输入同一个配对码，就能互相看见、互动、跨机聊天。
 
-**仓库**：<https://github.com/sunbinggang/dsh-pet-online> · **发布**：<https://github.com/sunbinggang/dsh-pet-online/releases/tag/v0.4.0>
+**仓库**：<https://github.com/sunbinggang/dsh-pet-online> · **发布**：<https://github.com/sunbinggang/dsh-pet-online/releases/latest>
 
-**不改 dsh-pet 源码，不 import 它的模块**——只走它公开的 `/dsh-pet-7340/*` 路由（`/state` 长轮询、`/config`、`/broadcast`、`/anim`、`/throw`、`/chat`）。
+**不改 dsh-pet 源码，不 import 它的模块**——只走它公开的 `/dsh-pet-7340/*` 路由（`/state` 长轮询、`/config`、`/broadcast`、`/anim`、`/throw`、`/chat`、`/sleep`、`/wake`）。
 
-## 现在能做什么（v0.4 · P1）
+## 现在能做什么（v0.8）
 
 - **配对**：一方生成 6 位配对码，另一方输入，即进入同一 relay 房间。
 - **在线列表**：设置页「桌宠联机」里看到同房间的设备（名字、宠物、在线状态）。
 - **投影**：远端宠物以「访客精灵」出现在 DSH 浮动层上，跟它的动作、气泡、睡觉状态走。
 - **访客物理**：访客精灵有自己的重力/落地回弹/边界反弹/彼此碰撞，可以拖拽抛掷、点一下戳对方（走独立物理循环，不会推动你本机的桌宠）。
-- **互动**：打招呼 / 投喂 / 戳一下 / 抱抱 / 留言；访客宠物**右击**有完整菜单（含「共享当前音乐」）。
-- **音乐共享**：读 dsh-music-player 最近一次播放（本地/QQ/酷狗/网易云/电台），把「歌名 - 歌手」共享给对方宠物，对端弹气泡+动作；只传元数据，不传音频。
+- **右键菜单**：打招呼 / 投喂 / 摸摸头 / 戳一下 / 抱抱 / **哄睡·叫醒** / **动作…（对方宠物的全部动作）** / 共享当前音乐 / 留言；菜单不再被桌宠压住，右键也不会误触发戳一下。
+- **音乐共享（可播放同一首）**：读 dsh-music-player 最近一次播放（本地/QQ/酷狗/网易云/电台），把曲目信息共享给对方宠物；对端勾选「允许对方让我播放同一首」后自动播，未勾选时在面板出现「播放同一首」按钮。播放发生时按歌名在本机曲库找同名曲目，找不到再按在线源 id 走 `/dsh-music/{nc,qq,kg}/play/<id>`；只传元数据，不传音频。
 - **本机动作同步**：旁路观察 dsh-pet 的 webm 请求，把你宠物正在播的随机动作/点击动画也实时同步给对侧。
-- **跨机聊天**：面板里给对方的宠物发一句话，对方用自己的 LLM 人设 + 记忆回你；双方消息都留在面板会话里。
+- **跨机聊天（两种）**：面板输入框直接发**纯文字**，对端只展示、不调用模型、不耗 token；也可选「AI 回复」，让对方宠物用自己的 LLM 人设回你。两种消息都留在面板会话里。
 - **忙碌降级**：对方正在专注会话时，互动只弹气泡不抢动画。
-- **回执与开关**：互动回执、聊天开关（接受聊天会消耗对方模型 token）、气泡共享开关。
+- **回执与开关**：互动回执、聊天/纯文字/音乐自动播放/气泡共享开关。
 - **更新检测**：启动后查 GitHub Release 最新版本，面板显示「当前 / 最新」，有新版可**一键更新**（下载 → 备份 → 覆盖，重启 DSH 生效）或去 Release 下载；默认每 6 小时检查一次，可关。
 - **隐私边界**：跨机只交换宠物摘要、互动意图与聊天文本；不含对话记忆、文件、账号。
 
@@ -74,7 +74,9 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 | `autoRelay` | `true` | 地址为本机时自动起 relay（端口占用则跳过） |
 | `nickname` | `""` | 联机昵称，留空用宠物名 |
 | `acceptInteractions` | `true` | 是否接受别人互动 |
-| `acceptChat` | `true` | 是否接受跨机聊天（会消耗本机模型 token） |
+| `acceptChat` | `true` | 是否接受跨机聊天（AI 回复会消耗本机模型 token） |
+| `acceptRawChat` | `true` | 是否接受纯文字消息（不经过模型） |
+| `acceptRemoteMusic` | `false` | 是否允许对端让我自动播放同一首（关时只给手动按钮） |
 | `shareBubbles` | `true` | 是否共享气泡文字 |
 | `maxPeers` | `8` | 同房间最多显示多少台 |
 | `updateCheck` | `true` | 自动检查 GitHub Release 新版本（每 6 小时） |
@@ -89,10 +91,10 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 | `hello` | 插件→relay | 加入房间，带 deviceId/昵称/宠物 |
 | `welcome` | relay→插件 | 回当前在线列表 |
 | `presence` | 插件→插件 | 宠物摘要（名/大小/动作/气泡/睡觉），变化时 1s 内合并发送，空闲 15s 保活 |
-| `interaction` | 插件→插件 | `{msgId,intent,note,fromName}`，intent 六选一 |
+| `interaction` | 插件→插件 | `{msgId,intent,note,fromName,track?}`，intent 见下 |
 | `reaction` | 插件→插件 | 互动回执 `{msgId,ok,reason,mode}` |
-| `chat` | 插件→插件 | 跨机聊天 `{msgId,text,fromName}` |
-| `chat-reply` | 插件→插件 | 聊天回复 `{msgId,ok,text|reason}` |
+| `chat` | 插件→插件 | 跨机聊天 `{msgId,text,fromName,raw?}`；`raw:true` 即纯文字 |
+| `chat-reply` | 插件→插件 | 聊天回复 `{msgId,ok,text|reason|ack}` |
 | `peer-leave` | relay→插件 | 对端断开 |
 
 面板与投影侧另有本机路由：
@@ -101,9 +103,10 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 - `GET /dsh-pet-online/events?since=&timeout=`：覆盖层长轮询，版本变化即返回远端宠物摘要（含 `assetRoot`，用于取本机 dsh-pet 的同名 webm）；
 - `GET /dsh-pet-online/music/now`：读 dsh-music-player 最近播放的曲目；
 - `POST /dsh-pet-online/local-action`：浏览器半侧上报「本机正在播的动画名」，宿主立刻广播（随机动作/点击动画也能同步）；
+- `POST /dsh-pet-online/music/play`：面板点「播放同一首」，把某条分享排队给本机浏览器播放；
 - `POST /dsh-pet-online/update/check` / `POST /dsh-pet-online/update/apply`：检查更新与一键更新（下载 → 备份 → 覆盖，重启生效）。
 
-互动意图只有 6 种（`wave/treat/pet/poke/hug/visit-note`）——远端不能传任意动画名或任意文案：动画由**本机**从本机宠物自己的池子里挑，文案由本机模板拼装，避免注入与素材不存在。
+互动意图：`wave/treat/pet/poke/hug/visit-note/music/sleep/wake/action`。远端不能传任意动画名：`action` 的动作名必须在该宠物的动作清单里（`/config` 的 animations），否则本机拒绝；其余动画由**本机**从本机宠物自己的池子里挑，文案由本机模板拼装，避免注入与素材不存在。
 
 ## 安全边界
 
@@ -116,7 +119,7 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 ## 开发
 
 ```bash
-node --test test/*.test.js     # 14 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
+node --test test/*.test.js     # 30 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
 node scripts/selfcheck.mjs     # 不开 DSH 跑一遍完整联机链路，打印每一步
 node scripts/livecheck.mjs     # 真机联调：用新代码直接对接运行中的 dsh-pet（默认 62142）
 node scripts/install.mjs       # 装进本地 profile（幂等）

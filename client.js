@@ -35,6 +35,12 @@ window.__ModuleLoader__.load({
       '.dpo-toast{position:fixed;right:16px;bottom:16px;z-index:4000;display:flex;flex-direction:column;gap:8px}',
       '.dpo-toast-item{background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.3));border-radius:10px;padding:8px 12px;font-size:12px}',
       '.dpo-guest-layer{position:fixed;inset:0;pointer-events:none;z-index:15;overflow:hidden}',
+      '.dpo-guest-layer.dpo-menu-open{z-index:2147483000}',
+      '.dpo-menu-sep{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1,rgba(148,163,184,.28))}',
+      '.dpo-menu-sub{max-height:260px;overflow:auto}',
+      '.dpo-share-music{position:fixed;right:16px;bottom:16px;z-index:2147483001;max-width:300px;padding:8px 10px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 8px 24px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;pointer-events:auto}',
+      '.dpo-share-music-title{font-weight:600;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dpo-chat-input{flex:1 1 160px;min-width:120px;border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));background:var(--dsw-alias-bg-base,transparent);color:inherit;border-radius:8px;padding:4px 8px;font-size:12px}',
       '.dpo-guest{position:absolute;left:0;top:0;display:flex;flex-direction:column;align-items:center;will-change:transform;touch-action:none}',
       '.dpo-guest video{display:block;pointer-events:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.18))}',
       '.dpo-guest-bubble{position:absolute;bottom:100%;margin-bottom:6px;max-width:220px;padding:5px 10px;border-radius:10px;background:var(--dsw-alias-bg-base,#fff);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));color:var(--dsw-alias-label-primary,#111);font-size:12px;line-height:1.35;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.12)}',
@@ -66,6 +72,95 @@ window.__ModuleLoader__.load({
         headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
       })
       return res.json().catch(() => ({ ok: false, reason: 'bad-response' }))
+    }
+
+    // ---- 跨机「播放同一首」：在本机找同名曲目，找不到再按在线源 id 走代理流 ----
+    const canon = (value) =>
+      String(value ?? '')
+        .toLowerCase()
+        .replace(/\.[a-z0-9]{2,4}$/, '')
+        .replace(/[\s_\-()[\]（）【】·]/g, '')
+
+    let sharedAudio = null
+    let sharedState = { seq: 0, playing: false, title: '', fromName: '', error: '', blocked: false, track: null }
+    const sharedListeners = new Set()
+    function sharedSet(patch) {
+      sharedState = { ...sharedState, ...patch }
+      for (const listener of [...sharedListeners]) listener(sharedState)
+    }
+    function useSharedMusic() {
+      const [state, setState] = useState(sharedState)
+      useEffect(() => {
+        sharedListeners.add(setState)
+        setState(sharedState)
+        return () => sharedListeners.delete(setState)
+      }, [])
+      return state
+    }
+    function stopSharedMusic() {
+      if (sharedAudio) {
+        try {
+          sharedAudio.pause()
+          sharedAudio.removeAttribute('src')
+          sharedAudio.load()
+        } catch {
+          /* ignore */
+        }
+      }
+      sharedSet({ playing: false, blocked: false })
+    }
+
+    async function resolveSharedSource(track) {
+      try {
+        const res = await fetch('/dsh-music/manifest', { cache: 'no-store' })
+        if (res.ok) {
+          const manifest = await res.json()
+          const name = canon(track.name)
+          const artists = (Array.isArray(track.artists) ? track.artists : []).map(canon).filter(Boolean)
+          const hit = (Array.isArray(manifest.tracks) ? manifest.tracks : []).find((item) => {
+            if (canon(item.name) !== name) return false
+            if (artists.length === 0) return true
+            const path = canon(item.path)
+            return artists.every((artist) => path.includes(artist))
+          })
+          if (hit && typeof hit.id === 'string' && hit.id !== '') return '/dsh-music/' + encodeURIComponent(hit.id)
+        }
+      } catch {
+        /* 音乐插件没装或没开：继续尝试在线源 */
+      }
+      const source = String(track.source ?? 'local')
+      const rawId = String(track.id ?? '')
+      const key = rawId.startsWith(source + ':') ? rawId.slice(source.length + 1) : rawId
+      if (key === '') return ''
+      if (source === 'nc' && /^\d+$/.test(key)) return '/dsh-music/nc/play/' + key
+      if (source === 'qq') return '/dsh-music/qq/play/' + encodeURIComponent(key)
+      if (source === 'kg' && /^[0-9a-f]{8,64}$/i.test(key)) return '/dsh-music/kg/play/' + encodeURIComponent(key)
+      return ''
+    }
+
+    async function playSharedTrack(track, fromName) {
+      if (!track || typeof track.name !== 'string' || track.name === '') return
+      stopSharedMusic()
+      const src = await resolveSharedSource(track)
+      const title = track.name + (track.artists && track.artists.length > 0 ? ' - ' + track.artists.join('/') : '')
+      if (src === '') {
+        sharedSet({ playing: false, blocked: false, title, fromName, error: '本机曲库和在线源都没有这首歌' })
+        return
+      }
+      sharedSet({ playing: true, blocked: false, title, fromName, error: '', seq: Date.now(), track })
+      try {
+        if (sharedAudio === null) {
+          sharedAudio = new Audio()
+          sharedAudio.preload = 'auto'
+          sharedAudio.addEventListener('ended', () => sharedSet({ playing: false }))
+          sharedAudio.addEventListener('error', () => sharedSet({ playing: false, error: '播放失败（可能是登录态或版权受限）' }))
+        }
+        sharedAudio.src = src
+        await sharedAudio.play()
+        sharedSet({ playing: true, blocked: false })
+      } catch (error) {
+        sharedSet({ playing: false, blocked: true, error: '浏览器拦截了自动播放，点「播放」继续' })
+      }
     }
 
     function useSnapshot() {
@@ -105,6 +200,9 @@ window.__ModuleLoader__.load({
       const [accept, setAccept] = useState(true)
       const [share, setShare] = useState(true)
       const [acceptChat, setAcceptChat] = useState(true)
+      const [acceptRawChat, setAcceptRawChat] = useState(true)
+      const [acceptRemoteMusic, setAcceptRemoteMusic] = useState(false)
+      const [drafts, setDrafts] = useState({})
       const [updateCheckOn, setUpdateCheckOn] = useState(true)
       const [relayUrlInput, setRelayUrlInput] = useState('')
 
@@ -119,8 +217,10 @@ window.__ModuleLoader__.load({
         setAccept(snap.config.acceptInteractions !== false)
         setShare(snap.config.shareBubbles !== false)
         setAcceptChat(snap.config.acceptChat !== false)
+        setAcceptRawChat(snap.config.acceptRawChat !== false)
+        setAcceptRemoteMusic(snap.config.acceptRemoteMusic === true)
         setUpdateCheckOn(snap.config.updateCheck !== false)
-      }, [snap && snap.config && snap.config.acceptInteractions, snap && snap.config && snap.config.shareBubbles, snap && snap.config && snap.config.acceptChat, snap && snap.config && snap.config.updateCheck])
+      }, [snap && snap.config && snap.config.acceptInteractions, snap && snap.config && snap.config.shareBubbles, snap && snap.config && snap.config.acceptChat, snap && snap.config && snap.config.acceptRawChat, snap && snap.config && snap.config.acceptRemoteMusic, snap && snap.config && snap.config.updateCheck])
 
       const toast = (text) => {
         const id = Date.now() + Math.random()
@@ -217,6 +317,22 @@ window.__ModuleLoader__.load({
         )
       }
 
+      const sendRaw = (peer) => {
+        const text = String(drafts[peer.deviceId] || '').trim().slice(0, 500)
+        if (text === '') return
+        setDrafts((prev) => ({ ...prev, [peer.deviceId]: '' }))
+        run(
+          () => getJson('/chat', { method: 'POST', body: JSON.stringify({ to: peer.deviceId, text, raw: true }) }),
+          '文字消息已发出',
+        )
+      }
+
+      const playMusicShare = (seq) =>
+        run(
+          () => getJson('/music/play', { method: 'POST', body: JSON.stringify({ seq }) }),
+          '已请求播放同一首',
+        )
+
       if (snap === null && error === null) return h('div', { className: 'dpo-wrap' }, h('div', { className: 'dpo-muted' }, '正在读取联机状态…'))
       if (snap && snap.ok === false) {
         return h('div', { className: 'dpo-wrap' }, h('div', { className: 'dpo-err' }, '联机状态不可用：' + (snap.reason || '未知错误')))
@@ -296,7 +412,7 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'poke') }, '戳一下'),
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'hug') }, '抱抱'),
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => leaveNote(peer) }, '留言'),
-                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => chatWith(peer) }, '聊天'),
+                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => chatWith(peer) }, 'AI 聊天'),
                 ),
               ),
           (snap && Array.isArray(snap.reactions) ? snap.reactions : []).slice(0, 3).map((r) =>
@@ -329,8 +445,33 @@ window.__ModuleLoader__.load({
                           { className: 'dpo-chat-line', key: m.at + m.from },
                           h('b', null, m.from === 'me' ? '我：' : peer.name + '：'),
                           m.text,
+                          m.raw ? h('span', { className: 'dpo-muted' }, '（文字）') : null,
                         ),
                       ),
+                  h(
+                    'div',
+                    { className: 'dpo-row', style: { marginTop: 4 } },
+                    h('input', {
+                      className: 'dpo-chat-input',
+                      placeholder: '直接发一条文字（不经过模型）',
+                      value: drafts[peer.deviceId] || '',
+                      maxLength: 500,
+                      onChange: (e) => setDrafts((prev) => ({ ...prev, [peer.deviceId]: e.target.value })),
+                      onKeyDown: (e) => {
+                        if (e.key === 'Enter') sendRaw(peer)
+                      },
+                    }),
+                    h(
+                      'button',
+                      {
+                        className: 'dpo-btn primary',
+                        disabled: busy || String(drafts[peer.deviceId] || '').trim() === '',
+                        onClick: () => sendRaw(peer),
+                      },
+                      '发送',
+                    ),
+                    h('button', { className: 'dpo-btn', disabled: busy, onClick: () => chatWith(peer) }, 'AI 回复'),
+                  ),
                 )
               }),
           h(
@@ -348,6 +489,59 @@ window.__ModuleLoader__.load({
                 },
               }),
               '接受别人和我的宠物聊天（会用你的模型 token）',
+            ),
+          ),
+          h(
+            'div',
+            { className: 'dpo-row', style: { marginTop: 4 } },
+            h(
+              'label',
+              { className: 'dpo-row' },
+              h('input', {
+                type: 'checkbox',
+                checked: acceptRawChat,
+                onChange: (e) => {
+                  setAcceptRawChat(e.target.checked)
+                  save({ acceptRawChat: e.target.checked })
+                },
+              }),
+              '接受纯文字消息（不经过模型，不消耗 token）',
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'dpo-card' },
+          h('div', { className: 'dpo-title' }, '音乐分享'),
+          (snap && Array.isArray(snap.musicShares) ? snap.musicShares : []).length === 0
+            ? h('div', { className: 'dpo-muted' }, '暂无人分享音乐。在访客宠物上右键可以「共享当前音乐」。')
+            : (snap.musicShares || []).map((item) =>
+                h(
+                  'div',
+                  { className: 'dpo-row', key: 'share-' + item.seq, style: { marginBottom: 4 } },
+                  h(
+                    'span',
+                    { className: 'dpo-muted' },
+                    item.fromName + ' 分享了《' + item.track.name + (item.track.artists && item.track.artists.length > 0 ? ' - ' + item.track.artists.join('/') : '') + '》',
+                  ),
+                  h('button', { className: 'dpo-btn', disabled: busy, onClick: () => playMusicShare(item.seq) }, '播放同一首'),
+                ),
+              ),
+          h(
+            'div',
+            { className: 'dpo-row', style: { marginTop: 4 } },
+            h(
+              'label',
+              { className: 'dpo-row' },
+              h('input', {
+                type: 'checkbox',
+                checked: acceptRemoteMusic,
+                onChange: (e) => {
+                  setAcceptRemoteMusic(e.target.checked)
+                  save({ acceptRemoteMusic: e.target.checked })
+                },
+              }),
+              '允许对方让我播放同一首（自动播放，仅本机曲库/已登录在线源）',
             ),
           ),
         ),
@@ -746,6 +940,8 @@ window.__ModuleLoader__.load({
       }, [pet.x, pet.y])
 
       const onDown = (e) => {
+        // 只接管左键：右键要留给 contextmenu（被 preventDefault 取消的 pointerdown 会吞掉右击菜单）。
+        if (e.button !== 0) return
         const body = bodies.current.get(key)
         if (!body) return
         body.drag = true
@@ -799,22 +995,39 @@ window.__ModuleLoader__.load({
       )
     }
 
-    const GUEST_MENU = [
-      { intent: 'wave', label: '打招呼' },
-      { intent: 'treat', label: '投喂零食' },
-      { intent: 'pet', label: '摸摸头' },
-      { intent: 'poke', label: '戳一下' },
-      { intent: 'hug', label: '抱抱' },
-      { intent: 'music', label: '共享当前音乐' },
-      { intent: 'visit-note', label: '留言…' },
-    ]
+    function guestMenu(peer) {
+      const pet = (Array.isArray(peer.pets) ? peer.pets[0] : null) || {}
+      const actions = Array.isArray(pet.actions) ? pet.actions : []
+      return [
+        { intent: 'wave', label: '打招呼' },
+        { intent: 'treat', label: '投喂零食' },
+        { intent: 'pet', label: '摸摸头' },
+        { intent: 'poke', label: '戳一下' },
+        { intent: 'hug', label: '抱抱' },
+        { intent: pet.sleeping ? 'wake' : 'sleep', label: pet.sleeping ? '叫醒它' : '哄它睡觉' },
+        { intent: 'action-menu', label: actions.length > 0 ? '动作…' : '动作（无可用动作）', disabled: actions.length === 0 },
+        { intent: 'music', label: '共享当前音乐' },
+        { intent: 'visit-note', label: '留言…' },
+      ]
+    }
 
     function GuestLayer() {
       const snap = useOverlay()
       const bodies = useGuestBodies()
       const [menu, setMenu] = useState(null)
+      const [submenu, setSubmenu] = useState(null)
       const [toast, setToast] = useState('')
       const toastTimer = React.useRef(0)
+      const playedMusicSeq = React.useRef(0)
+      const shared = useSharedMusic()
+
+      React.useEffect(() => {
+        const music = snap && snap.music
+        if (!music || !music.track || typeof music.seq !== 'number') return
+        if (playedMusicSeq.current >= music.seq) return
+        playedMusicSeq.current = music.seq
+        void playSharedTrack(music.track, music.fromName)
+      }, [snap && snap.music && snap.music.seq])
 
       const showToast = (text) => {
         setToast(text)
@@ -822,12 +1035,12 @@ window.__ModuleLoader__.load({
         toastTimer.current = window.setTimeout(() => setToast(''), 3000)
       }
 
-      const sendIntent = async (peer, intent, note) => {
+      const sendIntent = async (peer, intent, note, track) => {
         try {
           await fetch(BASE + '/interact', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ to: peer.deviceId, intent, note }),
+            body: JSON.stringify({ to: peer.deviceId, intent, note, ...(track ? { track } : {}) }),
           })
         } catch {
           showToast('发送失败')
@@ -844,7 +1057,7 @@ window.__ModuleLoader__.load({
           }
           const track =
             data.track.name + (data.track.artists && data.track.artists.length > 0 ? ' - ' + data.track.artists.join('/') : '')
-          await sendIntent(peer, 'music', track.slice(0, 40))
+          await sendIntent(peer, 'music', track.slice(0, 40), data.track)
           showToast('已共享：' + track)
         } catch {
           showToast('共享音乐失败')
@@ -853,8 +1066,17 @@ window.__ModuleLoader__.load({
 
       const pick = async (item) => {
         const peer = menu
-        setMenu(null)
         if (!peer) return
+        if (item.intent === 'action-menu') {
+          setSubmenu('action')
+          return
+        }
+        if (item.intent === 'actions-back') {
+          setSubmenu(null)
+          return
+        }
+        setMenu(null)
+        setSubmenu(null)
         if (item.intent === 'music') return shareMusic(peer.peer)
         if (item.intent === 'visit-note') {
           const note = window.prompt('给 ' + peer.peer.name + ' 留句话（40 字以内）', '')
@@ -863,6 +1085,7 @@ window.__ModuleLoader__.load({
           if (trimmed !== '') await sendIntent(peer.peer, 'visit-note', trimmed)
           return
         }
+        if (item.intent === 'action') return sendIntent(peer.peer, 'action', item.note)
         await sendIntent(peer.peer, item.intent)
       }
 
@@ -885,30 +1108,73 @@ window.__ModuleLoader__.load({
           index += 1
         }
       }
-      const menuWidth = 170
-      const menuTop = menu ? Math.min(menu.y, window.innerHeight - 260) : 0
+      const menuWidth = 190
+      const menuTop = menu ? Math.min(menu.y, window.innerHeight - 320) : 0
       const menuLeft = menu ? Math.min(menu.x, window.innerWidth - menuWidth - 8) : 0
-      return sprites.length > 0 || menu !== null
+      const menuItems = menu === null
+        ? []
+        : submenu === 'action'
+          ? [
+              { intent: 'actions-back', label: '← 返回' },
+              ...((Array.isArray(menu.peer.pets) && menu.peer.pets[0] && Array.isArray(menu.peer.pets[0].actions) ? menu.peer.pets[0].actions : []).map((name) => ({
+                intent: 'action',
+                note: name,
+                label: name,
+              }))),
+            ]
+          : guestMenu(menu.peer)
+      const hasContent = sprites.length > 0 || menu !== null || shared.title !== ''
+      return hasContent
         ? h(
             'div',
-            { className: 'dpo-guest-layer' },
+            { className: 'dpo-guest-layer' + (menu !== null ? ' dpo-menu-open' : '') },
             sprites,
             menu !== null
               ? h(
                   React.Fragment,
                   null,
-                  h('div', { className: 'dpo-menu-backdrop', onPointerDown: () => setMenu(null) }),
+                  h('div', { className: 'dpo-menu-backdrop', onPointerDown: () => { setMenu(null); setSubmenu(null) } }),
                   h(
                     'div',
                     { className: 'dpo-menu', style: { left: menuLeft, top: menuTop, width: menuWidth } },
                     h('div', { className: 'dpo-menu-title' }, menu.peer.name),
-                    GUEST_MENU.map((item) =>
+                    menuItems.map((item) =>
                       h(
                         'button',
-                        { key: item.intent, className: 'dpo-menu-item', onClick: () => pick(item) },
+                        {
+                          key: item.intent + (item.note || ''),
+                          className: 'dpo-menu-item',
+                          disabled: item.disabled === true,
+                          onClick: () => pick(item),
+                        },
                         item.label,
                       ),
                     ),
+                  ),
+                )
+              : null,
+            shared.title !== ''
+              ? h(
+                  'div',
+                  { className: 'dpo-share-music' },
+                  h('div', { className: 'dpo-share-music-title' }, '♪ ' + shared.title),
+                  h(
+                    'div',
+                    { className: 'dpo-muted' },
+                    (shared.fromName ? '来自 ' + shared.fromName + ' · ' : '') +
+                      (shared.error !== '' ? shared.error : shared.playing ? '播放中' : '已停止'),
+                  ),
+                  h(
+                    'div',
+                    { className: 'dpo-row', style: { marginTop: 4 } },
+                    shared.blocked && shared.track
+                      ? h(
+                          'button',
+                          { className: 'dpo-btn primary', onClick: () => playSharedTrack(shared.track, shared.fromName) },
+                          '播放',
+                        )
+                      : null,
+                    h('button', { className: 'dpo-btn', onClick: stopSharedMusic }, '停止'),
                   ),
                 )
               : null,

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- 音乐共享升级为「播放同一首」：共享时连同曲目 id/歌名/歌手/来源一起发给对端；对端勾选「允许对方让我播放同一首」后自动播，未勾选时面板出现手动「播放同一首」按钮。播放端按歌名在本机 `/dsh-music/manifest` 找同名曲目（歌手需出现在 path），找不到再按来源走 `/dsh-music/nc|qq|kg/play/<id>`，都没有则提示；浏览器拦截自动播放时给重试按钮。
+- 新增纯文字跨机聊天：消息带 `raw:true`，对端直接展示、**不调用 LLM、不耗 token**；面板聊天卡片改为输入框 +「发送」，原「聊天」改名「AI 聊天」。
+- 修复右键菜单不可用：`GuestPet` 只接管左键 pointerdown（右键不再被 preventDefault 吞掉 contextmenu，也不误触发 poke）；菜单打开时把访客层提到桌宠之上（`dpo-menu-open`）。
+- 右键菜单接入 dsh-pet 的睡觉与动作：新增「哄睡/叫醒」（按对方是否 sleeping 切换）与「动作…」子菜单（列出对方宠物全部动作，带返回）。
+- `bridge.applyIntent` 新增 `sleep/wake/action`：动作名必须在该宠物动作清单内，否则拒绝（`unknown-animation`）。
+- 偏好新增 `acceptRawChat`（默认开）与 `acceptRemoteMusic`（默认关）；`setConfig` 只在连接参数变化时重连，避免改一个开关就短暂掉线丢互动。
+- 新增 `POST /music/play`；测试增至 30 个（睡觉/叫醒/动作、纯文字不走 LLM、音乐默认不自动播/勾选后自动播）。
+
 ## 0.7.0
 
 - 一键更新：面板「一键更新」直接下载 Release 的 tgz、解包并覆盖本包目录，覆盖前自动备份到 `$DSH_HOME/dsh-pet-online/backups/`，完成后提示重启 DSH。

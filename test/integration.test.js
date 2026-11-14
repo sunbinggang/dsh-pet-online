@@ -185,6 +185,93 @@ test('端到端：跨机聊天走对方 LLM 人设并回到本机记录', async 
   await new Promise((r) => relay.close(r))
 })
 
+test('端到端：纯文字消息不走对端 LLM', async () => {
+  const relay = createRelayServer()
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve))
+  const relayUrl = `ws://127.0.0.1:${relay.address().port}/ws`
+
+  const petA = await fakePetServer('A 的鱼')
+  const petB = await fakePetServer('B 的鱼')
+  const a = await makeService(await mkdtemp(join(tmpdir(), 'dpo-r1-')), petA.origin, 'R1', relayUrl)
+  const b = await makeService(await mkdtemp(join(tmpdir(), 'dpo-r2-')), petB.origin, 'R2', relayUrl)
+  try {
+    await a.pair('RAW234')
+    await b.pair('RAW234')
+    await waitUntil(() => a.snapshot().relay.status === 'online' && b.snapshot().relay.status === 'online')
+    await waitUntil(() => a.snapshot().peers.find((p) => p.deviceId === b.deviceId))
+
+    const sent = await a.chat({ to: b.deviceId, text: '这是一条原文', raw: true })
+    assert.equal(sent.ok, true)
+
+    const received = await waitUntil(() =>
+      (b.snapshot().chats[a.deviceId] ?? []).find((m) => m.raw === true && m.text === '这是一条原文'),
+    )
+    assert.ok(received)
+    await new Promise((r) => setTimeout(r, 400))
+    assert.equal(petB.calls.some((c) => c.path === '/dsh-pet-7340/chat'), false, 'raw 消息不应调用对端 LLM')
+    assert.equal((a.snapshot().chats[b.deviceId] ?? []).some((m) => m.from === 'me' && m.raw === true), true)
+  } finally {
+    a.stop()
+    b.stop()
+    petA.server.closeAllConnections?.()
+    petB.server.closeAllConnections?.()
+    await new Promise((r) => petA.server.close(r))
+    await new Promise((r) => petB.server.close(r))
+    relay.closeAllConnections?.()
+    await new Promise((r) => relay.close(r))
+  }
+})
+
+test('端到端：音乐分享默认不自动播，勾选后自动播；睡觉/动作直达对方宠物', async () => {
+  const relay = createRelayServer()
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve))
+  const relayUrl = `ws://127.0.0.1:${relay.address().port}/ws`
+
+  const petA = await fakePetServer('A 的鱼')
+  const petB = await fakePetServer('B 的鱼')
+  const a = await makeService(await mkdtemp(join(tmpdir(), 'dpo-m1-')), petA.origin, 'M1', relayUrl)
+  const b = await makeService(await mkdtemp(join(tmpdir(), 'dpo-m2-')), petB.origin, 'M2', relayUrl)
+  try {
+    await a.pair('MUS234')
+    await b.pair('MUS234')
+    await waitUntil(() => a.snapshot().relay.status === 'online' && b.snapshot().relay.status === 'online')
+    await waitUntil(() => a.snapshot().peers.find((p) => p.deviceId === b.deviceId))
+
+    const track = { id: 'nc:123', name: '冻结', artists: ['林俊杰'], source: 'nc' }
+    const shared = await a.interact({ to: b.deviceId, intent: 'music', note: '冻结 - 林俊杰', track })
+    assert.equal(shared.ok, true)
+    const first = await waitUntil(() => b.snapshot().musicShares[0])
+    assert.equal(first.track.name, '冻结')
+    assert.equal(first.track.id, 'nc:123')
+    assert.equal(b.snapshot().playRequest.track, null, '默认不自动播放')
+
+    const manual = b.requestMusicPlay(first.seq)
+    assert.equal(manual.ok, true)
+    assert.equal(b.snapshot().playRequest.track.name, '冻结')
+
+    await b.setConfig({ acceptRemoteMusic: true })
+    await a.interact({ to: b.deviceId, intent: 'music', note: '晴天 - 周杰伦', track: { id: 'qq:abc', name: '晴天', artists: ['周杰伦'], source: 'qq' } })
+    const auto = await waitUntil(() => b.snapshot().playRequest.track && b.snapshot().playRequest.track.name === '晴天')
+    assert.ok(auto)
+
+    assert.equal((await a.interact({ to: b.deviceId, intent: 'sleep' })).ok, true)
+    await waitUntil(() => petB.calls.find((c) => c.path === '/dsh-pet-7340/sleep'))
+    assert.equal((await a.interact({ to: b.deviceId, intent: 'wake' })).ok, true)
+    await waitUntil(() => petB.calls.find((c) => c.path === '/dsh-pet-7340/wake'))
+    assert.equal((await a.interact({ to: b.deviceId, intent: 'action', note: '吃白饭' })).ok, true)
+    await waitUntil(() => petB.calls.find((c) => c.path === '/dsh-pet-7340/anim'))
+  } finally {
+    a.stop()
+    b.stop()
+    petA.server.closeAllConnections?.()
+    petB.server.closeAllConnections?.()
+    await new Promise((r) => petA.server.close(r))
+    await new Promise((r) => petB.server.close(r))
+    relay.closeAllConnections?.()
+    await new Promise((r) => relay.close(r))
+  }
+})
+
 test('端到端：relay 地址指向本机时自动启动中继', async () => {
   const port = await freePort()
   const petA = await fakePetServer('A 的鱼')
