@@ -48,12 +48,13 @@ window.__ModuleLoader__.load({
       '.dpo-guest.dpo-sleeping{opacity:.55}',
       '.dpo-guest-zzz{font-size:12px;color:#94a3b8}',
       '.dpo-chat-line{padding:3px 0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-primary,#e2e8f0)}',
-      '.dpo-menu-backdrop{position:fixed;inset:0;z-index:30}',
-      '.dpo-menu{position:fixed;z-index:31;min-width:150px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 10px 30px rgba(0,0,0,.35)}',
-      '.dpo-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer}',
+      '.dpo-menu-backdrop{position:fixed;inset:0;z-index:30;pointer-events:auto}',
+      '.dpo-menu{position:fixed;z-index:31;min-width:150px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 10px 30px rgba(0,0,0,.35);pointer-events:auto}',
+      '.dpo-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer;pointer-events:auto}',
       '.dpo-menu-item:hover{background:var(--dsw-alias-bg-layer-1,rgba(148,163,184,.18))}',
+      '.dpo-menu-item[disabled]{opacity:.45;cursor:not-allowed}',
       '.dpo-menu-title{padding:4px 10px 6px;font-size:11px;color:var(--dsw-alias-label-secondary,#94a3b8)}',
-      '.dpo-overlay-toast{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:32;padding:8px 14px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));font-size:12px;color:var(--dsw-alias-label-primary,#e2e8f0)}',
+      '.dpo-overlay-toast{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:32;padding:8px 14px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));font-size:12px;color:var(--dsw-alias-label-primary,#e2e8f0);pointer-events:none}',
     ].join('\n')
 
     function installStyles() {
@@ -1136,7 +1137,12 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'dpo-menu-backdrop', onPointerDown: () => { setMenu(null); setSubmenu(null) } }),
                   h(
                     'div',
-                    { className: 'dpo-menu', style: { left: menuLeft, top: menuTop, width: menuWidth } },
+                    {
+                      className: 'dpo-menu',
+                      style: { left: menuLeft, top: menuTop, width: menuWidth },
+                      onPointerDown: (e) => e.stopPropagation(),
+                      onContextMenu: (e) => e.preventDefault(),
+                    },
                     h('div', { className: 'dpo-menu-title' }, menu.peer.name),
                     menuItems.map((item) =>
                       h(

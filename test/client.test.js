@@ -101,4 +101,13 @@ test('浏览器半侧：模块契约与两个插槽注册', async () => {
 
   // 样式只注入一次，且插件卸载时应能移除
   assert.equal(loaded.styleTags.length, 1)
+
+  // 回归：覆盖层是 pointer-events:none，菜单/遮罩必须显式恢复 auto，否则菜单点不动。
+  const css = loaded.styleTags[0].textContent
+  for (const selector of ['.dpo-menu{', '.dpo-menu-item{', '.dpo-menu-backdrop{']) {
+    const start = css.indexOf(selector)
+    assert.ok(start >= 0, 'missing ' + selector)
+    const end = css.indexOf('}', start)
+    assert.match(css.slice(start, end), /pointer-events:auto/, selector + ' needs pointer-events:auto')
+  }
 })

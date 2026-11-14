@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2
+
+- 修复右键菜单打开后点任何一项都没反应：访客覆盖层 `.dpo-guest-layer` 是 `pointer-events:none`，菜单和遮罩没有恢复 `pointer-events:auto`，整块菜单对鼠标透明。现在菜单容器、菜单项、遮罩都显式 `auto`，菜单内 pointerdown 不再冒泡；禁用项样式也补上。
+- 加回归测试：解析注入的 CSS，断言菜单相关选择器都带 `pointer-events:auto`。
+
 ## 0.8.1
 
 - 修复更新检查失败 `HTTP 403`：`api.github.com` 对未登录请求按出口 IP 限流，很容易整段共享 IP 被拒。改为优先读 `https://github.com/<repo>/releases/latest` 的 302 `Location`，其次 `releases.atom`，API 只作最后兜底。
