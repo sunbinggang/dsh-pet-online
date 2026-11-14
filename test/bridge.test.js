@@ -72,6 +72,7 @@ test('bridge：localPets 展开条目树并带 assetRoot', async () => {
   assert.equal(pets.length, 1)
   assert.equal(pets[0].id, 'main')
   assert.equal(pets[0].assetRoot, 'main')
+  assert.equal(pets[0].idle, '待机呼吸休闲')
   assert.ok(pools.click.includes('点击回应-开心跃动'))
   assert.ok(pools.eat.includes('吃白饭'))
   await new Promise((r) => {

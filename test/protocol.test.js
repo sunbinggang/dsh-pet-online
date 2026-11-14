@@ -69,6 +69,8 @@ test('宠物摘要：只带联机需要的字段，气泡受开关控制', () =>
   const noBubble = summarizePet(pet, { shareBubbles: false })
   assert.equal(noBubble.bubble, undefined)
   assert.equal(summarizePet({ id: 'x', size: Number.NaN }, {}).size, 160)
+  // 没有动作名时靠待机动画兜底，投影侧才不会只剩名字
+  assert.equal(summarizePet({ id: 'x', idle: '待机呼吸休闲' }, {}).idle, '待机呼吸休闲')
 })
 
 test('模板拼接：未知变量留空', () => {

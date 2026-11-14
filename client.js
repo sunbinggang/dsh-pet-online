@@ -398,60 +398,108 @@ window.__ModuleLoader__.load({
       return snap
     }
 
-    /** 一段远端动画：blob 加载后交给 <video>，素材来自本机 dsh-pet 的同名 webm。 */
+    /** 一段远端动画：blob 加载后交给 <video>；动作名缺失时回落到对方上报的待机动画，
+     *  再不行就显示本机 dsh-pet 的角色图，保证访客精灵不会是「空白 + 名字」。 */
     function RemoteClip(props) {
-      const { assetRoot, anim, width } = props
+      const { assetRoot, anim, fallback, width } = props
+      const candidates = [anim, fallback].filter(
+        (value, index, list) => typeof value === 'string' && value !== '' && list.indexOf(value) === index,
+      )
+      const height = Math.round((width * 9) / 16)
       const videoRef = React.useRef(null)
       const [ready, setReady] = useState(false)
+      const [failed, setFailed] = useState(candidates.length === 0)
+
       useEffect(() => {
         let alive = true
         let objectUrl = null
         const controller = new AbortController()
+        setFailed(false)
+        setReady(false)
+
+        const tryDirect = (src) => {
+          if (!videoRef.current) return false
+          videoRef.current.src = src
+          videoRef.current.load()
+          videoRef.current.play().catch(() => {})
+          setReady(true)
+          return true
+        }
+
         const load = async () => {
-          setReady(false)
-          for (const ext of ['webm', 'mov']) {
-            try {
-              const url =
-                '/dsh-pet-7340/thumb/' +
-                encodeURIComponent(assetRoot || 'main') +
-                '/' +
-                encodeURIComponent(anim) +
-                '.' +
-                ext
-              const res = await fetch(url, { cache: 'default', signal: controller.signal })
-              if (!res.ok) continue
-              const blob = await res.blob()
-              if (!alive) return
-              objectUrl = URL.createObjectURL(blob)
-              if (videoRef.current) {
-                videoRef.current.src = objectUrl
-                videoRef.current.load()
-                videoRef.current.play().catch(() => {})
+          for (const name of candidates) {
+            if (/^https?:\/\//.test(name)) {
+              if (alive && tryDirect(name)) return
+              continue
+            }
+            for (const ext of ['webm', 'mov']) {
+              try {
+                const url =
+                  '/dsh-pet-7340/thumb/' +
+                  encodeURIComponent(assetRoot || 'main') +
+                  '/' +
+                  encodeURIComponent(name) +
+                  '.' +
+                  ext
+                const res = await fetch(url, { cache: 'default', signal: controller.signal })
+                if (!res.ok) continue
+                const blob = await res.blob()
+                if (!alive) return
+                objectUrl = URL.createObjectURL(blob)
+                if (videoRef.current) {
+                  videoRef.current.src = objectUrl
+                  videoRef.current.load()
+                  videoRef.current.play().catch(() => {})
+                }
+                setReady(true)
+                return
+              } catch {
+                /* try next */
               }
-              setReady(true)
-              return
-            } catch {
-              /* try next ext */
             }
           }
+          if (alive) setFailed(true)
         }
-        if (anim) load()
+
+        load()
         return () => {
           alive = false
           controller.abort()
           if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
-      }, [assetRoot, anim])
-      return h('video', {
-        ref: videoRef,
-        width,
-        height: Math.round((width * 9) / 16),
-        muted: true,
-        autoPlay: true,
-        loop: true,
-        playsInline: true,
-        style: { opacity: ready ? 1 : 0, transition: 'opacity .2s ease' },
-      })
+      }, [assetRoot, candidates.join('|')])
+
+      return h(
+        'div',
+        { style: { position: 'relative', width, height } },
+        failed || !ready
+          ? h('img', {
+              src: '/dsh-pet-7340/character?root=' + encodeURIComponent(assetRoot || 'main'),
+              width,
+              height,
+              draggable: false,
+              alt: '',
+              style: { width, height, objectFit: 'contain', opacity: failed ? 0.9 : 0.45 },
+            })
+          : null,
+        h('video', {
+          ref: videoRef,
+          width,
+          height,
+          muted: true,
+          autoPlay: true,
+          loop: true,
+          playsInline: true,
+          style: {
+            position: 'absolute',
+            inset: 0,
+            width,
+            height,
+            opacity: ready ? 1 : 0,
+            transition: 'opacity .2s ease',
+          },
+        }),
+      )
     }
 
     /** 访客精灵的本地物理：重力、落地回弹、左右壁反弹、彼此碰撞、拖拽抛掷。 */
@@ -604,7 +652,7 @@ window.__ModuleLoader__.load({
         },
         pet.bubble ? h('div', { className: 'dpo-guest-bubble' }, pet.bubble) : null,
         pet.sleeping ? h('div', { className: 'dpo-guest-zzz' }, '💤') : null,
-        h(RemoteClip, { assetRoot: pet.assetRoot, anim: pet.anim, width }),
+        h(RemoteClip, { assetRoot: pet.assetRoot, anim: pet.anim, fallback: pet.idle, width }),
         h('div', { className: 'dpo-guest-name' }, peer.name),
       )
     }

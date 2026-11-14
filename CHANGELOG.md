@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3
+
+- 修复「对方宠物不能正常显示」：远端宠物没有动作名时，presence 现在携带待机动画名（`idle`），访客精灵用它循环播放；仍取不到素材时回退到本机 dsh-pet 的角色图（`/character?root=`），不再是空白。
+- presence 改为「一上线 / 发现新对端就立刻发一帧」，不再等 15s 保活或状态变化；`device` 同时带 `id` 与 `deviceId`。
+- 远端 `anim` 支持 http(s) 地址直接当视频源。
+- 测试补 idle 字段断言。
+
 ## 0.4.2
 
 - 修 CI 卡住：`npm test` 改为无参发现 + `--test-force-exit`（Windows 的 cmd 不展开 `test/*.test.js`，Node 也不 glob）；工作流固定 Node 24。
