@@ -107,6 +107,32 @@ test('relay：两台设备配对后能互发互动帧，房间互相隔离', asy
   await cleanup(server, a, b, c)
 })
 
+test('relay：music-sync 广播给房间其他人，房间外收不到', async () => {
+  const server = createRelayServer()
+  const port = await listen(server)
+  const room = 'pair:SYNC23'
+  const a = await connect(`ws://127.0.0.1:${port}/?room=${room}`)
+  hello(a, 'dev-sync01', 'A')
+  await a.wait((f) => f.type === 'welcome')
+  const b = await connect(`ws://127.0.0.1:${port}/?room=${room}`)
+  hello(b, 'dev-sync02', 'B')
+  await b.wait((f) => f.type === 'welcome')
+
+  const track = { id: 'nc:42', name: '晴天', artists: ['周杰伦'], source: 'nc' }
+  a.send({ v: 1, type: 'music-sync', payload: { track } })
+  const got = await b.wait((f) => f.type === 'music-sync')
+  assert.equal(got.from, 'dev-sync01')
+  assert.equal(got.payload.track.name, '晴天')
+
+  const outsider = await connect(`ws://127.0.0.1:${port}/?room=pair:OTHER3`)
+  hello(outsider, 'dev-sync03', 'C')
+  await outsider.wait((f) => f.type === 'welcome')
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(outsider.frames.some((f) => f.type === 'music-sync'), false)
+
+  await cleanup(server, a, b, outsider)
+})
+
 test('relay：未知目标返回 peer-offline，房间满拒绝', async () => {
   const server = createRelayServer()
   const port = await listen(server)

@@ -225,6 +225,66 @@ window.__ModuleLoader__.load({
       return playSharedTrack(track, fromName)
     }
 
+    // ---- 跟随房间切歌：让 dsh-music-player 自己播（而不是插件内再挂一个 <audio>） ----
+    // dsh-music-player 的宿主没有 /intent 的写接口，浏览器半侧每 2s 轮询 GET /dsh-music/intent。
+    // 我们在页面里旁路这条请求：轮询到来时把对端的曲目当作「播放意图」回给它，
+    // 于是走它自己的取链、队列、播放条与进度保存，播放的是同一个播放器。
+    let musicIntentOverride = null
+    let musicIntentFallback = null
+
+    async function resolveMusicIntent(track) {
+      const source = String(track.source ?? 'local')
+      const rawId = String(track.id ?? '')
+      const key = rawId.startsWith(source + ':') ? rawId.slice(source.length + 1) : rawId
+      if (source === 'nc' && /^\d+$/.test(key)) {
+        return { action: 'play', kind: 'nc', id: key, name: track.name, artists: track.artists || [] }
+      }
+      if (source === 'qq' && /^[A-Za-z0-9]+$/.test(key)) {
+        return { action: 'play', kind: 'qq', id: key, name: track.name, artists: track.artists || [] }
+      }
+      if (source !== 'local') return null
+      // 本地曲目的 id 因机器而异：接收端按歌名在 manifest 里找自己那份。
+      try {
+        const res = await fetch('/dsh-music/manifest', { cache: 'no-store' })
+        if (!res.ok) return null
+        const manifest = await res.json()
+        const name = canon(track.name)
+        const artists = (Array.isArray(track.artists) ? track.artists : []).map(canon).filter(Boolean)
+        const hit = (Array.isArray(manifest.tracks) ? manifest.tracks : []).find((item) => {
+          if (canon(item.name) !== name) return false
+          if (artists.length === 0) return true
+          const path = canon(item.path)
+          return artists.every((artist) => path.includes(artist))
+        })
+        if (hit && typeof hit.id === 'string' && hit.id !== '') return { action: 'play', id: hit.id, name: track.name }
+      } catch {
+        /* 没有音乐插件 */
+      }
+      return null
+    }
+
+    /** 把对端曲目交给 dsh-music-player；没有可用的播放器时退回插件内播放。 */
+    async function syncViaMusicPlayer(track, fromName) {
+      const intent = await resolveMusicIntent(track)
+      if (intent === null) {
+        void playSharedTrack(track, fromName)
+        return
+      }
+      musicIntentOverride = intent
+      stopSharedMusic()
+      const artists = Array.isArray(track.artists) && track.artists.length > 0 ? ' - ' + track.artists.join('/') : ''
+      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '已在音乐播放器里切到这一首', track })
+      if (musicIntentFallback !== null) clearTimeout(musicIntentFallback)
+      // 5 秒内没人来取意图，说明音乐插件没开：退回插件内播放器，别让用户干等。
+      musicIntentFallback = setTimeout(() => {
+        musicIntentFallback = null
+        if (musicIntentOverride === intent) {
+          musicIntentOverride = null
+          void playSharedTrack(track, fromName)
+        }
+      }, 5000)
+    }
+
     function useSnapshot() {
       const [snap, setSnap] = useState(null)
       const [error, setError] = useState(null)
@@ -264,6 +324,7 @@ window.__ModuleLoader__.load({
       const [acceptChat, setAcceptChat] = useState(true)
       const [acceptRawChat, setAcceptRawChat] = useState(true)
       const [acceptRemoteMusic, setAcceptRemoteMusic] = useState(false)
+      const [syncMusic, setSyncMusic] = useState(true)
       const [drafts, setDrafts] = useState({})
       const [compose, setCompose] = useState(null)
       const [updateCheckOn, setUpdateCheckOn] = useState(true)
@@ -282,8 +343,9 @@ window.__ModuleLoader__.load({
         setAcceptChat(snap.config.acceptChat !== false)
         setAcceptRawChat(snap.config.acceptRawChat !== false)
         setAcceptRemoteMusic(snap.config.acceptRemoteMusic === true)
+        setSyncMusic(snap.config.syncMusic !== false)
         setUpdateCheckOn(snap.config.updateCheck !== false)
-      }, [snap && snap.config && snap.config.acceptInteractions, snap && snap.config && snap.config.shareBubbles, snap && snap.config && snap.config.acceptChat, snap && snap.config && snap.config.acceptRawChat, snap && snap.config && snap.config.acceptRemoteMusic, snap && snap.config && snap.config.updateCheck])
+      }, [snap && snap.config && snap.config.acceptInteractions, snap && snap.config && snap.config.shareBubbles, snap && snap.config && snap.config.acceptChat, snap && snap.config && snap.config.acceptRawChat, snap && snap.config && snap.config.acceptRemoteMusic, snap && snap.config && snap.config.syncMusic, snap && snap.config && snap.config.updateCheck])
 
       const toast = (text) => {
         const id = Date.now() + Math.random()
@@ -388,6 +450,17 @@ window.__ModuleLoader__.load({
         const artists = Array.isArray(now.track.artists) ? now.track.artists.join('/') : ''
         await interactAll('music', now.track.name + (artists ? ' - ' + artists : ''), now.track)
       }
+
+      /** 立刻把本机正在播的曲子推给全房间，让对端 dsh-music-player 切到同一首。 */
+      const syncMusicNow = () =>
+        run(async () => {
+          const res = await getJson('/music/sync', { method: 'POST', body: '{}' })
+          if (res && res.ok === false) {
+            const map = { 'not-playing': '本机音乐播放器没有在播放', 'relay-offline': '还没有连上房间' }
+            setNotice(map[res.reason] || '同步失败：' + (res.reason || '未知原因'))
+          }
+          return res
+        }, '已把当前播放同步给房间')
 
       // 不用 window.prompt：DSH 桌面壳（Electron）里 prompt 被禁用，点了没反应。
       const openCompose = (peer, kind) => setCompose({ peer, kind, value: '' })
@@ -676,6 +749,35 @@ window.__ModuleLoader__.load({
               '允许对方让我播放同一首（自动播放，仅本机曲库/已登录在线源）',
             ),
           ),
+          h(
+            'div',
+            { className: 'dpo-row', style: { marginTop: 4 } },
+            h(
+              'label',
+              { className: 'dpo-row' },
+              h('input', {
+                type: 'checkbox',
+                checked: syncMusic,
+                onChange: (e) => {
+                  setSyncMusic(e.target.checked)
+                  save({ syncMusic: e.target.checked })
+                },
+              }),
+              '跟随房间同步播放（一侧切歌，另一侧用 dsh-music-player 切到同一首）',
+            ),
+          ),
+          h(
+            'div',
+            { className: 'dpo-row' },
+            h('button', { className: 'dpo-btn', disabled: busy, onClick: syncMusicNow }, '同步我的当前播放'),
+            snap.musicSync && snap.musicSync.track
+              ? h(
+                  'span',
+                  { className: 'dpo-muted' },
+                  '最近同步：' + snap.musicSync.fromName + '《' + snap.musicSync.track.name + '》',
+                )
+              : null,
+          ),
         ),
         h(
           'div',
@@ -878,8 +980,21 @@ window.__ModuleLoader__.load({
       let lastAt = 0
       window.fetch = function patchedFetch(input, init) {
         try {
+          const url = typeof input === 'string' ? input : input && typeof input.url === 'string' ? input.url : ''
+          // 对端切歌：把待播意图喂给 dsh-music-player 的 /intent 轮询，让它自己播。
+          if (musicIntentOverride !== null && /\/dsh-music\/intent(\?|$)/.test(url)) {
+            const intent = musicIntentOverride
+            musicIntentOverride = null
+            if (musicIntentFallback !== null) {
+              clearTimeout(musicIntentFallback)
+              musicIntentFallback = null
+            }
+            return new Response(JSON.stringify(intent), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            })
+          }
           if (!(init && init.__dpo === true)) {
-            const url = typeof input === 'string' ? input : input && typeof input.url === 'string' ? input.url : ''
             const match = /\/dsh-pet-7340\/thumb\/[^/]+\/([^/]+)\.(webm|mov)$/.exec(url)
             if (match) {
               const name = decodeURIComponent(match[1])
@@ -1235,6 +1350,7 @@ window.__ModuleLoader__.load({
       const [toast, setToast] = useState('')
       const toastTimer = React.useRef(0)
       const playedMusicSeq = React.useRef(0)
+      const playedSyncSeq = React.useRef(0)
       const lastReactionMsg = React.useRef('')
       const shared = useSharedMusic()
 
@@ -1247,6 +1363,16 @@ window.__ModuleLoader__.load({
         if (Date.now() - lastDirectMusicAt < 5000) return
         void playSharedTrack(music.track, music.fromName)
       }, [snap && snap.music && snap.music.seq])
+
+      // 对端切歌：优先让 dsh-music-player 自己切过去，插件不再叠一个 <audio>。
+      React.useEffect(() => {
+        const sync = snap && snap.musicSync
+        if (!sync || !sync.track || typeof sync.seq !== 'number') return
+        if (playedSyncSeq.current >= sync.seq) return
+        playedSyncSeq.current = sync.seq
+        if (snap.config && snap.config.syncMusic === false) return
+        void syncViaMusicPlayer(sync.track, sync.fromName)
+      }, [snap && snap.musicSync && snap.musicSync.seq])
 
       // 页面里第一次点击时顺手解锁音频：之后即使是对端自动推来的歌也能直接响。
       React.useEffect(() => {

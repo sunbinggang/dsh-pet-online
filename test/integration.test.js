@@ -60,6 +60,18 @@ function fakePetServer(name, options = {}) {
         },
       })
     }
+    if (url.pathname === '/dsh-music/prefs') {
+      const prefs = {}
+      if (options.music) {
+        prefs['dsh-music-nc-playback'] = JSON.stringify({
+          id: options.music.id ?? 'nc:1',
+          name: options.music.name,
+          artists: options.music.artists ?? [],
+          ts: Date.now(),
+        })
+      }
+      return send({ ok: true, prefs })
+    }
     calls.push({ method: req.method, path: url.pathname, query: url.search, body: '' })
     req.on('data', () => {})
     req.on('end', () => {
@@ -261,6 +273,50 @@ test('端到端：音乐分享默认不自动播，勾选后自动播；睡觉/�
     await waitUntil(() => petB.calls.find((c) => c.path === '/dsh-pet-7340/wake'))
     assert.equal((await a.interact({ to: b.deviceId, intent: 'action', note: '吃白饭' })).ok, true)
     await waitUntil(() => petB.calls.find((c) => c.path === '/dsh-pet-7340/anim'))
+  } finally {
+    a.stop()
+    b.stop()
+    petA.server.closeAllConnections?.()
+    petB.server.closeAllConnections?.()
+    await new Promise((r) => petA.server.close(r))
+    await new Promise((r) => petB.server.close(r))
+    relay.closeAllConnections?.()
+    await new Promise((r) => relay.close(r))
+  }
+})
+
+test('端到端：一侧切歌，另一侧收到 music-sync 并交给本机音乐插件', async () => {
+  const relay = createRelayServer()
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve))
+  const relayUrl = `ws://127.0.0.1:${relay.address().port}/ws`
+
+  const petA = await fakePetServer('A 的鱼', { music: { name: '晴天', artists: ['周杰伦'], id: 'nc:7788' } })
+  const petB = await fakePetServer('B 的鱼')
+  const a = await makeService(await mkdtemp(join(tmpdir(), 'dpo-sy1-')), petA.origin, 'S1', relayUrl)
+  const b = await makeService(await mkdtemp(join(tmpdir(), 'dpo-sy2-')), petB.origin, 'S2', relayUrl)
+  try {
+    await a.pair('SYN234')
+    await b.pair('SYN234')
+    await waitUntil(() => a.snapshot().relay.status === 'online' && b.snapshot().relay.status === 'online')
+    await waitUntil(() => a.snapshot().peers.find((p) => p.deviceId === b.deviceId))
+
+    // B 关掉跟播时，A 的切歌不会进入 B 的同步队列。
+    await b.setConfig({ syncMusic: false })
+    const pushed = await a.syncMusicNow()
+    assert.equal(pushed.ok, true)
+    assert.equal(pushed.track.name, '晴天')
+    assert.equal(pushed.sent, 1)
+    assert.equal(b.snapshot().musicSync, null, '关掉跟播时不接收')
+
+    await b.setConfig({ syncMusic: true })
+    const again = await a.syncMusicNow()
+    assert.equal(again.ok, true)
+    const sync = await waitUntil(() => b.snapshot().musicSync)
+    const synced = sync.track
+    assert.equal(synced.name, '晴天')
+    assert.equal(synced.id, 'nc:7788')
+    assert.equal(synced.source, 'nc')
+    assert.equal(sync.fromName, 'S1')
   } finally {
     a.stop()
     b.stop()

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+
+- **跟随切歌同步播放**：一侧在 dsh-music-player 里切歌，同房间其他人的音乐播放器自动切到同一首。实现是在页面里旁路拦截 dsh-music-player 每 2 秒一次的 `GET /dsh-music/intent` 轮询，把对端曲目作为播放意图回给它，因此走它自己的取链、队列、播放条与进度保存，不再由插件叠一个 `<audio>`。
+- 新增 `music-sync` 协议帧与 `POST /dsh-pet-online/music/sync`（立刻把本机当前曲目推给房间）；`/state` 增加 `musicSync`；配置增加 `syncMusic`（默认开）。
+- 本机每 2.5 秒对比 dsh-music-player 的 `source:id` 检测切歌（prefs 的 `ts` 每次写都刷新，不能用来判重）；刚被远端同步过的曲目在 10 秒内不再反弹回房间，避免来回切。
+- 接收端只支持 dsh-music-player 能处理的源：网易云（数字 id）、QQ（songmid）、本机曲库（按歌名+歌手在 manifest 里找自己那份）；其余源退回插件内播放器。5 秒内没人取意图（没装/没开音乐插件）也退回插件内播放。
+- 测试增至 44 个（relay 转发 `music-sync`、双机切歌端到端、关掉跟播不接收、客户端拦截轮询的回归断言）。
+
 ## 0.9.1
 
 - 修复「音乐无法同步播放」：面板「播放同一首」原来只发 `POST /music/play`，真正的 `audio.play()` 发生在之后的长轮询回调里，没有用户手势，被 Chromium 自动播放策略拦掉。现在按钮在点击手势里直接播放，再同步服务端状态。

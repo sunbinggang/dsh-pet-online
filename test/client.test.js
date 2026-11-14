@@ -134,11 +134,13 @@ test('浏览器半侧：留言/聊天用自带输入框，不依赖 window.promp
   assert.match(source, /submitCompose/)
 })
 
-test('浏览器半侧：播放同一首要保住用户手势，不能只发请求等轮询', async () => {
+test('浏览器半侧：房间切歌交给 dsh-music-player，而不是再挂一个 audio', async () => {
   const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-  // 回归：只 POST /music/play 的话，真正的 audio.play() 发生在轮询回调里，会被浏览器自动播放策略拦下。
-  assert.match(source, /playMusicShare\s*=\s*\(item\)/, 'play button must pass the full share item')
-  assert.match(source, /playSharedFromGesture\(item\.track/, 'play button must start playback inside the click gesture')
-  assert.match(source, /function unlockSharedAudio\(\)/, 'need a gesture-time audio unlock')
-  assert.match(source, /armMusicUnlockRetry/, 'blocked autoplay needs a pointerdown retry')
+  // dsh-music-player 没有 /intent 的写接口，只能在页面里拦截它的轮询并回一份播放意图。
+  assert.match(source, /syncViaMusicPlayer/, 'need a music-player sync path')
+  assert.match(source, /musicIntentOverride/, 'need an intent override')
+  assert.ok(source.includes('dsh-music\\/intent'), 'must intercept the music player intent poll')
+  assert.match(source, /new Response\(JSON\.stringify\(intent\)/, 'intent poll must answer with JSON')
+  assert.match(source, /resolveMusicIntent/, 'need to map a shared track to a music-player intent')
+  assert.match(source, /syncMusicNow/, 'panel needs a manual sync button')
 })

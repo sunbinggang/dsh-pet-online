@@ -168,10 +168,12 @@ function attach(socket) {
     const members = rooms.get(conn.room)
     if (!members) return
 
-    if (msg.type === 'presence') {
-      const device = msg.payload?.device
-      if (device && typeof device.name === 'string') {
-        conn.profile = { ...conn.profile, name: text(device.name, 24), pet: text(device.pet, 48) }
+    if (msg.type === 'presence' || msg.type === 'music-sync') {
+      if (msg.type === 'presence') {
+        const device = msg.payload?.device
+        if (device && typeof device.name === 'string') {
+          conn.profile = { ...conn.profile, name: text(device.name, 24), pet: text(device.pet, 48) }
+        }
       }
       broadcast(conn.room, { ...msg, from: conn.deviceId }, conn)
       return

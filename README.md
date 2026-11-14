@@ -6,9 +6,10 @@
 
 **不改 dsh-pet 源码，不 import 它的模块**——只走它公开的 `/dsh-pet-7340/*` 路由（`/state` 长轮询、`/config`、`/broadcast`、`/anim`、`/throw`、`/chat`、`/sleep`、`/wake`）。
 
-## 现在能做什么（v0.9）
+## 现在能做什么（v0.10）
 
 - **配对 / 多人房间**：一方生成 6 位配对码，其他人都输入同一个码就进入同一个 relay 房间，最多 8 台设备（含自己）同时在房；面板显示「房间 N/8 人」，每人一只访客精灵，彼此可见、可互动。
+- **跟随切歌**：一侧在 dsh-music-player 里切歌（或点面板「同步我的当前播放」），同房间其他人的音乐播放器随之切到同一首——直接走它自己的 `/intent` 轮询、队列、播放条和进度保存，而不是插件再叠一个 `<audio>`；5 秒没人取意图（没开音乐插件）才退回插件内播放。
 - **在线列表**：设置页「桌宠联机」里看到同房间的设备（名字、宠物、在线状态）。
 - **投影**：远端宠物以「访客精灵」出现在 DSH 浮动层上，跟它的动作、气泡、睡觉状态走；气泡和原生碎碎念一样是**文字 + 表情包配图**（按 `main.memes` 里的名字取 `/pic/memes/<root>/<name>.png`）。
 - **访客物理**：访客精灵有自己的重力/落地回弹/边界反弹/彼此碰撞，可以拖拽抛掷、点一下戳对方（走独立物理循环，不会推动你本机的桌宠）。
@@ -79,6 +80,7 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 | `acceptChat` | `true` | 是否接受跨机聊天（AI 回复会消耗本机模型 token） |
 | `acceptRawChat` | `true` | 是否接受纯文字消息（不经过模型） |
 | `acceptRemoteMusic` | `false` | 是否允许对端让我自动播放同一首（关时只给手动按钮） |
+| `syncMusic` | `true` | 跟随房间切歌：本机切歌广播给房间，对端切歌时让本机 dsh-music-player 播同一首 |
 | `shareBubbles` | `true` | 是否共享气泡文字 |
 | `maxPeers` | `8` | 同房间最多显示多少台 |
 | `updateCheck` | `true` | 自动检查 GitHub Release 新版本（每 6 小时） |
@@ -97,6 +99,7 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 | `reaction` | 插件→插件 | 互动回执 `{msgId,ok,reason,mode}` |
 | `chat` | 插件→插件 | 跨机聊天 `{msgId,text,fromName,raw?}`；`raw:true` 即纯文字 |
 | `chat-reply` | 插件→插件 | 聊天回复 `{msgId,ok,text|reason|ack}` |
+| `music-sync` | 插件→插件 | 房间切歌 `{track}`；接收端交给本机 dsh-music-player 播同一首 |
 | `peer-leave` | relay→插件 | 对端断开 |
 
 面板与投影侧另有本机路由：
@@ -104,6 +107,7 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 - `GET /dsh-pet-online/state`：面板快照（连接状态、配对码、在线设备、回执、更新检查）；
 - `GET /dsh-pet-online/events?since=&timeout=`：覆盖层长轮询，版本变化即返回远端宠物摘要（含 `assetRoot`，用于取本机 dsh-pet 的同名 webm）；
 - `GET /dsh-pet-online/music/now`：读 dsh-music-player 最近播放的曲目；
+- `POST /dsh-pet-online/music/sync`：立刻把本机当前曲目广播给房间（面板「同步我的当前播放」）；
 - `POST /dsh-pet-online/local-action`：浏览器半侧上报「本机正在播的动画名」，宿主立刻广播（随机动作/点击动画也能同步）；
 - `POST /dsh-pet-online/interact-all`：把同一个互动意图发给房间里所有在线设备（`{intent,note,track?}`，返回 `sent/skipped/total`）；
 - `POST /dsh-pet-online/chat-all`：把纯文字（或 AI 聊天）发给房间里所有在线设备；
@@ -123,7 +127,7 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 ## 开发
 
 ```bash
-node --test --test-force-exit  # 42 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
+node --test --test-force-exit  # 44 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
 node scripts/selfcheck.mjs     # 不开 DSH 跑一遍完整联机链路，打印每一步
 node scripts/livecheck.mjs     # 真机联调：用新代码直接对接运行中的 dsh-pet（默认 62142）
 node scripts/install.mjs       # 装进本地 profile（幂等）

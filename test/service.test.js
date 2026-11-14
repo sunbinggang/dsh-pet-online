@@ -28,6 +28,14 @@ function fakePetServer() {
         },
       })
     }
+    if (url.pathname === '/dsh-music/prefs') {
+      return send({
+        ok: true,
+        prefs: {
+          'dsh-music-nc-playback': JSON.stringify({ id: 'nc:9', name: '晴天', artists: ['周杰伦'], ts: 1 }),
+        },
+      })
+    }
     send({ ok: true })
   })
   return new Promise((resolve) => {
@@ -150,6 +158,15 @@ test('宿主半侧：apply 注册路由，ping/state/config/pairing 可用', asy
   const localAction = await call('POST', '/dsh-pet-online/local-action', { anim: '点击回应-开心跃动' })
   assert.equal(localAction.status, 200)
   assert.equal(localAction.json.ok, true)
+
+  const now = await call('GET', '/dsh-pet-online/music/now')
+  assert.equal(now.status, 200)
+  assert.equal(now.json.track.name, '晴天')
+
+  // relay 没连上时，切歌同步要明确失败而不是假装成功
+  const sync = await call('POST', '/dsh-pet-online/music/sync', {})
+  assert.equal(sync.status, 400)
+  assert.equal(sync.json.reason, 'relay-offline')
 
   ctx.disposeAll()
   await new Promise((r) => {
