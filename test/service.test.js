@@ -147,6 +147,10 @@ test('宿主半侧：apply 注册路由，ping/state/config/pairing 可用', asy
   assert.equal(interact.status, 400)
   assert.equal(interact.json.reason, 'unknown-peer')
 
+  const localAction = await call('POST', '/dsh-pet-online/local-action', { anim: '点击回应-开心跃动' })
+  assert.equal(localAction.status, 200)
+  assert.equal(localAction.json.ok, true)
+
   ctx.disposeAll()
   await new Promise((r) => {
     pet.closeAllConnections?.()

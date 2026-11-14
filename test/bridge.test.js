@@ -24,6 +24,19 @@ function fakePetServer() {
       )
       return
     }
+    if (url.pathname === '/dsh-music/prefs') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          ok: true,
+          prefs: {
+            'dsh-music-playback': JSON.stringify({ name: '旧歌', artists: ['旧歌手'], ts: 1000 }),
+            'dsh-music-qq-playback': JSON.stringify({ name: '晴天', artists: ['周杰伦'], ts: Date.now() }),
+          },
+        }),
+      )
+      return
+    }
     calls.push({ method: req.method, path: url.pathname })
     req.on('data', () => {})
     req.on('end', () => {
@@ -59,6 +72,20 @@ test('bridge：bubbleOnly 只弹气泡，不动画不抛掷', async () => {
     ['/dsh-pet-7340/broadcast'],
   )
 
+  await new Promise((r) => {
+    server.closeAllConnections?.()
+    server.close(r)
+  })
+})
+
+test('bridge：读最近播放的音乐', async () => {
+  const { server } = await fakePetServer()
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  const now = await bridge.musicNow()
+  assert.equal(now.ok, true)
+  assert.equal(now.track.name, '晴天')
+  assert.deepEqual(now.track.artists, ['周杰伦'])
+  assert.equal(now.track.source, 'qq')
   await new Promise((r) => {
     server.closeAllConnections?.()
     server.close(r)

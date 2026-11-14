@@ -39,6 +39,12 @@ window.__ModuleLoader__.load({
       '.dpo-guest.dpo-sleeping{opacity:.55}',
       '.dpo-guest-zzz{font-size:12px;color:#94a3b8}',
       '.dpo-chat-line{padding:3px 0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-primary,#e2e8f0)}',
+      '.dpo-menu-backdrop{position:fixed;inset:0;z-index:30}',
+      '.dpo-menu{position:fixed;z-index:31;min-width:150px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 10px 30px rgba(0,0,0,.35)}',
+      '.dpo-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer}',
+      '.dpo-menu-item:hover{background:var(--dsw-alias-bg-layer-1,rgba(148,163,184,.18))}',
+      '.dpo-menu-title{padding:4px 10px 6px;font-size:11px;color:var(--dsw-alias-label-secondary,#94a3b8)}',
+      '.dpo-overlay-toast{position:fixed;left:50%;bottom:40px;transform:translateX(-50%);z-index:32;padding:8px 14px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));font-size:12px;color:var(--dsw-alias-label-primary,#e2e8f0)}',
     ].join('\n')
 
     function installStyles() {
@@ -463,6 +469,43 @@ window.__ModuleLoader__.load({
       return snap
     }
 
+    /**
+     * 本机动作探针：dsh-pet 的动画素材都经 fetch('/dsh-pet-7340/thumb/<root>/<name>.webm') 拉取，
+     * 这里旁路观察请求，把「正在播的动画名」报给宿主转播给对端。
+     * 自己投影访客时用的 fetch 带 __dpo 标记，不会被误当成本机动作。
+     */
+    function installAnimProbe() {
+      if (typeof window === 'undefined' || window.__dpoAnimProbe === true || typeof window.fetch !== 'function') return
+      window.__dpoAnimProbe = true
+      const original = window.fetch.bind(window)
+      let lastName = ''
+      let lastAt = 0
+      window.fetch = function patchedFetch(input, init) {
+        try {
+          if (!(init && init.__dpo === true)) {
+            const url = typeof input === 'string' ? input : input && typeof input.url === 'string' ? input.url : ''
+            const match = /\/dsh-pet-7340\/thumb\/[^/]+\/([^/]+)\.(webm|mov)$/.exec(url)
+            if (match) {
+              const name = decodeURIComponent(match[1])
+              const now = Date.now()
+              if (name !== lastName && now - lastAt > 200) {
+                lastName = name
+                lastAt = now
+                void original(BASE + '/local-action', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ anim: name }),
+                }).catch(() => {})
+              }
+            }
+          }
+        } catch {
+          /* 探针失败绝不影响正常请求 */
+        }
+        return original(input, init)
+      }
+    }
+
     /** 一段远端动画：blob 加载后交给 <video>；动作名缺失时回落到对方上报的待机动画，
      *  再不行就显示本机 dsh-pet 的角色图，保证访客精灵不会是「空白 + 名字」。 */
     function RemoteClip(props) {
@@ -506,7 +549,7 @@ window.__ModuleLoader__.load({
                   encodeURIComponent(name) +
                   '.' +
                   ext
-                const res = await fetch(url, { cache: 'default', signal: controller.signal })
+                const res = await fetch(url, { cache: 'default', signal: controller.signal, __dpo: true })
                 if (!res.ok) continue
                 const blob = await res.blob()
                 if (!alive) return
@@ -636,7 +679,7 @@ window.__ModuleLoader__.load({
     }
 
     function GuestPet(props) {
-      const { peer, pet, index, bodies } = props
+      const { peer, pet, index, bodies, onMenu } = props
       const width = Math.min(340, Math.max(120, Math.round((pet.size || 320) * 0.36)))
       const height = Math.round((width * 9) / 16)
       const key = peer.deviceId + ':' + pet.id
@@ -709,11 +752,16 @@ window.__ModuleLoader__.load({
           ref: bind,
           className: 'dpo-guest' + (pet.sleeping ? ' dpo-sleeping' : ''),
           style: { width, height, pointerEvents: 'auto', cursor: 'grab' },
-          title: peer.name + ' 的宠物（可拖动抛掷，点一下戳它）',
+          title: peer.name + ' 的宠物（可拖动抛掷，点一下戳它，右击打开菜单）',
           onPointerDown: onDown,
           onPointerMove: onMove,
           onPointerUp: onUp,
           onPointerCancel: onUp,
+          onContextMenu: (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onMenu?.(peer, e.clientX, e.clientY)
+          },
         },
         pet.bubble ? h('div', { className: 'dpo-guest-bubble' }, pet.bubble) : null,
         pet.sleeping ? h('div', { className: 'dpo-guest-zzz' }, '💤') : null,
@@ -722,25 +770,128 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const GUEST_MENU = [
+      { intent: 'wave', label: '打招呼' },
+      { intent: 'treat', label: '投喂零食' },
+      { intent: 'pet', label: '摸摸头' },
+      { intent: 'poke', label: '戳一下' },
+      { intent: 'hug', label: '抱抱' },
+      { intent: 'music', label: '共享当前音乐' },
+      { intent: 'visit-note', label: '留言…' },
+    ]
+
     function GuestLayer() {
       const snap = useOverlay()
       const bodies = useGuestBodies()
+      const [menu, setMenu] = useState(null)
+      const [toast, setToast] = useState('')
+      const toastTimer = React.useRef(0)
+
+      const showToast = (text) => {
+        setToast(text)
+        clearTimeout(toastTimer.current)
+        toastTimer.current = window.setTimeout(() => setToast(''), 3000)
+      }
+
+      const sendIntent = async (peer, intent, note) => {
+        try {
+          await fetch(BASE + '/interact', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ to: peer.deviceId, intent, note }),
+          })
+        } catch {
+          showToast('发送失败')
+        }
+      }
+
+      const shareMusic = async (peer) => {
+        try {
+          const res = await fetch(BASE + '/music/now', { cache: 'no-store' })
+          const data = await res.json()
+          if (!data || data.ok !== true || !data.track) {
+            showToast('音乐播放器当前没有在播放音乐')
+            return
+          }
+          const track =
+            data.track.name + (data.track.artists && data.track.artists.length > 0 ? ' - ' + data.track.artists.join('/') : '')
+          await sendIntent(peer, 'music', track.slice(0, 40))
+          showToast('已共享：' + track)
+        } catch {
+          showToast('共享音乐失败')
+        }
+      }
+
+      const pick = async (item) => {
+        const peer = menu
+        setMenu(null)
+        if (!peer) return
+        if (item.intent === 'music') return shareMusic(peer.peer)
+        if (item.intent === 'visit-note') {
+          const note = window.prompt('给 ' + peer.peer.name + ' 留句话（40 字以内）', '')
+          if (note === null) return
+          const trimmed = note.trim().slice(0, 40)
+          if (trimmed !== '') await sendIntent(peer.peer, 'visit-note', trimmed)
+          return
+        }
+        await sendIntent(peer.peer, item.intent)
+      }
+
       if (!snap || !Array.isArray(snap.peers)) return null
       const sprites = []
       let index = 0
       for (const peer of snap.peers) {
         if (peer.online === false) continue
         for (const pet of Array.isArray(peer.pets) ? peer.pets : []) {
-          sprites.push(h(GuestPet, { key: peer.deviceId + ':' + pet.id, peer, pet, index, bodies }))
+          sprites.push(
+            h(GuestPet, {
+              key: peer.deviceId + ':' + pet.id,
+              peer,
+              pet,
+              index,
+              bodies,
+              onMenu: (target, x, y) => setMenu({ peer: target, x, y }),
+            }),
+          )
           index += 1
         }
       }
-      return sprites.length > 0 ? h('div', { className: 'dpo-guest-layer' }, sprites) : null
+      const menuWidth = 170
+      const menuTop = menu ? Math.min(menu.y, window.innerHeight - 260) : 0
+      const menuLeft = menu ? Math.min(menu.x, window.innerWidth - menuWidth - 8) : 0
+      return sprites.length > 0 || menu !== null
+        ? h(
+            'div',
+            { className: 'dpo-guest-layer' },
+            sprites,
+            menu !== null
+              ? h(
+                  React.Fragment,
+                  null,
+                  h('div', { className: 'dpo-menu-backdrop', onPointerDown: () => setMenu(null) }),
+                  h(
+                    'div',
+                    { className: 'dpo-menu', style: { left: menuLeft, top: menuTop, width: menuWidth } },
+                    h('div', { className: 'dpo-menu-title' }, menu.peer.name),
+                    GUEST_MENU.map((item) =>
+                      h(
+                        'button',
+                        { key: item.intent, className: 'dpo-menu-item', onClick: () => pick(item) },
+                        item.label,
+                      ),
+                    ),
+                  ),
+                )
+              : null,
+            toast !== '' ? h('div', { className: 'dpo-overlay-toast' }, toast) : null,
+          )
+        : null
     }
 
     return {
       inject: ['slots'],
       apply(ctx) {
+        installAnimProbe()
         const disposeCss = installStyles()
         ctx.effect(() => () => disposeCss(), 'dsh-pet-online: styles')
         ctx.slots.inject('settings.section', () =>

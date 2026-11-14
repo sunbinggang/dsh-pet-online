@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- 访客宠物右键菜单：打招呼 / 投喂零食 / 摸摸头 / 戳一下 / 抱抱 / 共享当前音乐 / 留言。
+- 音乐共享：宿主读 dsh-music-player 的 `GET /dsh-music/prefs`，取最近一次播放的曲目（本地/QQ/酷狗/网易云/电台），以 `music` 意图把「歌名 - 歌手」发给对端，对端宠物弹气泡并做动作（不传音频）。
+- 本机动作同步：浏览器半侧旁路观察 dsh-pet 的 `/dsh-pet-7340/thumb/<root>/<anim>.webm` 请求，把正在播的动画名经 `POST /dsh-pet-online/local-action` 上报，宿主立刻广播给对端；随机动作/点击动画也能同步，不只是 `/state` 里有的动作。
+- 新增路由：`GET /music/now`、`POST /local-action`。
+- 测试增至 20 个（音乐偏好读取用真实 key 形态：`dsh-music-*-playback`）。
+
 ## 0.5.0
 
 - 新增更新检测：插件启动后查询 GitHub Release 最新 tag，与本机版本比较；面板「版本与更新」显示当前/最新版本，发现新版本给「去下载」，另有「检查更新」按钮与自动检查开关（默认开，每 6 小时一次）。
