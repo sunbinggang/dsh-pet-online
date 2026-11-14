@@ -209,6 +209,7 @@ test('端到端：纯文字消息不走对端 LLM', async () => {
     assert.ok(received)
     await new Promise((r) => setTimeout(r, 400))
     assert.equal(petB.calls.some((c) => c.path === '/dsh-pet-7340/chat'), false, 'raw 消息不应调用对端 LLM')
+    assert.ok(petB.calls.some((c) => c.path === '/dsh-pet-7340/broadcast'), 'raw 消息应让对端宠物冒泡')
     assert.equal((a.snapshot().chats[b.deviceId] ?? []).some((m) => m.from === 'me' && m.raw === true), true)
   } finally {
     a.stop()
