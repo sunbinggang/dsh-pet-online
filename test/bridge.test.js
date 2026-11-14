@@ -3,49 +3,78 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createLocalBridge } from '../lib/local-bridge.js'
 
-function fakePetServer() {
+function fakePetServer(options = {}) {
   const calls = []
+  const flags = { sleeping: options.sleeping === true }
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://pet.local')
-    if (url.pathname === '/dsh-pet-7340/config') {
+    const json = (body) => {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(
-        JSON.stringify({
-          ok: true,
-          main: {
-            pets: [{ id: 'main', name: '蓝毛小女仆', size: 462, display: 'web' }],
-            animations: {
-              clicks: ['点击回应-开心跃动'],
-              categories: [{ id: '吃什么', actions: ['吃白饭'] }],
-              idle: ['待机呼吸休闲'],
-            },
+      res.end(JSON.stringify(body))
+    }
+    if (url.pathname === '/dsh-pet-7340/config') {
+      json({
+        ok: true,
+        main: {
+          pets: [{ id: 'main', name: '蓝毛小女仆', size: 462, display: 'web' }],
+          animations: {
+            clicks: ['点击回应-开心跃动'],
+            categories: [{ id: '吃什么', name: '吃什么', actions: ['吃白饭', '大口吃零食'] }],
+            idle: ['待机呼吸休闲'],
+            turn: ['转身'],
           },
-        }),
-      )
+        },
+      })
+      return
+    }
+    if (url.pathname === '/dsh-pet-7340/state') {
+      json({
+        ok: true,
+        counter: 1,
+        pets: { main: { sleep: { counter: 1, data: { sleeping: options.reportSleeping ?? flags.sleeping } } } },
+        sections: {},
+      })
+      return
+    }
+    if (url.pathname === '/dsh-pet-7340/sleep') {
+      flags.sleeping = true
+      calls.push({ method: req.method, path: url.pathname })
+      json({ ok: true, sleeping: true })
+      return
+    }
+    if (url.pathname === '/dsh-pet-7340/wake') {
+      flags.sleeping = false
+      calls.push({ method: req.method, path: url.pathname })
+      json({ ok: true, sleeping: false })
       return
     }
     if (url.pathname === '/dsh-music/prefs') {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(
-        JSON.stringify({
-          ok: true,
-          prefs: {
-            'dsh-music-playback': JSON.stringify({ name: '旧歌', artists: ['旧歌手'], ts: 1000 }),
-            'dsh-music-qq-playback': JSON.stringify({ name: '晴天', artists: ['周杰伦'], ts: Date.now() }),
-          },
-        }),
-      )
+      json({
+        ok: true,
+        prefs: {
+          'dsh-music-playback': JSON.stringify({ name: '旧歌', artists: ['旧歌手'], ts: 1000 }),
+          'dsh-music-qq-playback': JSON.stringify({ name: '晴天', artists: ['周杰伦'], ts: Date.now() }),
+        },
+      })
       return
     }
     calls.push({ method: req.method, path: url.pathname })
     req.on('data', () => {})
     req.on('end', () => {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true }))
+      // 模拟 dsh-pet 的 sleepGated：睡觉时 anim/broadcast/chat 都拒绝
+      if (flags.sleeping && ['/dsh-pet-7340/anim', '/dsh-pet-7340/broadcast', '/dsh-pet-7340/chat'].includes(url.pathname)) {
+        json({ ok: false, reason: 'sleeping', message: '桌宠正在睡觉，先叫醒它' })
+        return
+      }
+      if (url.pathname === '/dsh-pet-7340/chat') {
+        json({ ok: true, text: '在呢' })
+        return
+      }
+      json({ ok: true })
     })
   })
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, calls }))
+    server.listen(0, '127.0.0.1', () => resolve({ server, calls, flags }))
   })
 }
 
@@ -140,13 +169,98 @@ test('bridge：睡觉/叫醒/动作意图落到 dsh-pet 对应端点', async () 
   }
 })
 
-test('bridge：bubbleOnly 时睡觉也只弹气泡', async () => {
+test('bridge：哄睡只调 /sleep，不广播（睡觉时广播必被拒）', async () => {
   const { server, calls } = await fakePetServer()
   const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
   try {
-    const result = await bridge.applyIntent('sleep', { anim: null, text: '{from} 哄你睡觉' }, { from: '小鱼' }, { bubbleOnly: true })
+    await bridge.getState()
+    const result = await bridge.applyIntent('sleep', { anim: null, text: '{from} 哄你睡觉' }, { from: '小鱼' })
     assert.equal(result.ok, true)
-    assert.deepEqual(calls.map((c) => c.path), ['/dsh-pet-7340/broadcast'])
+    assert.deepEqual(calls.map((c) => c.path), ['/dsh-pet-7340/sleep'])
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
+})
+
+test('bridge：已经睡着时再哄睡直接成功，不重复调用', async () => {
+  const { server, calls, flags } = await fakePetServer({ sleeping: true })
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    await bridge.getState()
+    const result = await bridge.applyIntent('sleep', { anim: null, text: '{from} 哄你睡觉' }, { from: '小鱼' })
+    assert.equal(result.ok, true)
+    assert.equal(flags.sleeping, true)
+    assert.deepEqual(calls, [])
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
+})
+
+test('bridge：睡觉中收到互动先叫醒，再播动画与气泡', async () => {
+  const { server, calls, flags } = await fakePetServer({ sleeping: true })
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    await bridge.getState()
+    const result = await bridge.applyIntent('wave', { anim: 'click', text: '{from} 跟你打招呼啦' }, { from: '小鱼' })
+    assert.equal(result.ok, true)
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      ['/dsh-pet-7340/wake', '/dsh-pet-7340/anim', '/dsh-pet-7340/broadcast'],
+    )
+    assert.equal(flags.sleeping, false)
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
+})
+
+test('bridge：本地 sleep 缓存过期时靠 sleeping 报错触发补叫醒', async () => {
+  const { server, calls, flags } = await fakePetServer({ sleeping: true, reportSleeping: false })
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    await bridge.getState() // 缓存的仍是「醒着」
+    const result = await bridge.applyIntent('wave', { anim: 'click', text: '{from} 跟你打招呼啦' }, { from: '小鱼' })
+    assert.equal(result.ok, true)
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      [
+        '/dsh-pet-7340/anim',
+        '/dsh-pet-7340/broadcast',
+        '/dsh-pet-7340/wake',
+        '/dsh-pet-7340/anim',
+        '/dsh-pet-7340/broadcast',
+      ],
+    )
+    assert.equal(flags.sleeping, false)
+  } finally {
+    await new Promise((r) => {
+      server.closeAllConnections?.()
+      server.close(r)
+    })
+  }
+})
+
+test('bridge：宠物睡着时聊天会先叫醒再说话', async () => {
+  const { server, calls, flags } = await fakePetServer({ sleeping: true })
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  try {
+    await bridge.getState()
+    const result = await bridge.chat('main', '你在吗')
+    assert.equal(result.ok, true)
+    assert.equal(result.text, '在呢')
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      ['/dsh-pet-7340/wake', '/dsh-pet-7340/chat'],
+    )
+    assert.equal(flags.sleeping, false)
   } finally {
     await new Promise((r) => {
       server.closeAllConnections?.()

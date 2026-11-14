@@ -1009,8 +1009,26 @@ window.__ModuleLoader__.load({
         { intent: 'action-menu', label: actions.length > 0 ? '动作…' : '动作（无可用动作）', disabled: actions.length === 0 },
         { intent: 'music', label: '共享当前音乐' },
         { intent: 'visit-note', label: '留言…' },
+        { intent: 'chat-raw', label: '发文字消息…' },
+        { intent: 'chat-ai', label: 'AI 聊天…' },
       ]
     }
+
+    /** 把 reaction/接口里的 reason 翻成人话，互动失败时直接弹出来。 */
+    const REACTION_TEXT = {
+      sleeping: '对方宠物睡着了，先叫醒它',
+      locked: '对方正在和宠物互动，稍后再试',
+      'unknown-animation': '对方没有这个动作',
+      'pet-call-failed': '对方桌宠没有响应',
+      'no-pet': '对方没有可互动的宠物',
+      declined: '对方关闭了互动',
+      'rate-limited': '发送太频繁，稍后再试',
+      'unknown-peer': '对方已离线',
+      'relay-offline': '中继未连接',
+      'chat-failed': '对方聊天没有响应',
+      'already-sleeping': '它已经睡着了',
+    }
+    const reasonText = (reason) => REACTION_TEXT[reason] || '操作失败：' + (reason || '未知原因')
 
     function GuestLayer() {
       const snap = useOverlay()
@@ -1020,6 +1038,7 @@ window.__ModuleLoader__.load({
       const [toast, setToast] = useState('')
       const toastTimer = React.useRef(0)
       const playedMusicSeq = React.useRef(0)
+      const lastReactionMsg = React.useRef('')
       const shared = useSharedMusic()
 
       React.useEffect(() => {
@@ -1030,6 +1049,20 @@ window.__ModuleLoader__.load({
         void playSharedTrack(music.track, music.fromName)
       }, [snap && snap.music && snap.music.seq])
 
+      // 对方回执失败时把原因亮出来（例如「对方宠物睡着了」）
+      React.useEffect(() => {
+        const list = snap && Array.isArray(snap.reactions) ? snap.reactions : []
+        const top = list[0]
+        if (!top || typeof top.msgId !== 'string') return
+        if (lastReactionMsg.current === '') {
+          lastReactionMsg.current = top.msgId
+          return
+        }
+        if (lastReactionMsg.current === top.msgId) return
+        lastReactionMsg.current = top.msgId
+        if (top.ok === false) showToast(reasonText(top.reason))
+      }, [snap && snap.reactions && snap.reactions[0] && snap.reactions[0].msgId])
+
       const showToast = (text) => {
         setToast(text)
         clearTimeout(toastTimer.current)
@@ -1038,13 +1071,20 @@ window.__ModuleLoader__.load({
 
       const sendIntent = async (peer, intent, note, track) => {
         try {
-          await fetch(BASE + '/interact', {
+          const res = await fetch(BASE + '/interact', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ to: peer.deviceId, intent, note, ...(track ? { track } : {}) }),
           })
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok || data.ok !== true) {
+            showToast(reasonText(data.reason || 'send-failed'))
+            return false
+          }
+          return true
         } catch {
-          showToast('发送失败')
+          showToast('发送失败：中继没有连上')
+          return false
         }
       }
 
@@ -1058,8 +1098,7 @@ window.__ModuleLoader__.load({
           }
           const track =
             data.track.name + (data.track.artists && data.track.artists.length > 0 ? ' - ' + data.track.artists.join('/') : '')
-          await sendIntent(peer, 'music', track.slice(0, 40), data.track)
-          showToast('已共享：' + track)
+          if (await sendIntent(peer, 'music', track.slice(0, 40), data.track)) showToast('已共享：' + track)
         } catch {
           showToast('共享音乐失败')
         }
@@ -1084,6 +1123,29 @@ window.__ModuleLoader__.load({
           if (note === null) return
           const trimmed = note.trim().slice(0, 40)
           if (trimmed !== '') await sendIntent(peer.peer, 'visit-note', trimmed)
+          return
+        }
+        if (item.intent === 'chat-raw' || item.intent === 'chat-ai') {
+          const ai = item.intent === 'chat-ai'
+          const text = window.prompt(
+            (ai ? '让 ' + peer.peer.name + ' 的桌宠回你（会调用它的模型）' : '给 ' + peer.peer.name + ' 发条消息（直接送达，不经过模型）') + '：',
+            '',
+          )
+          if (text === null) return
+          const trimmed = text.trim().slice(0, 120)
+          if (trimmed === '') return
+          try {
+            const res = await fetch(BASE + '/chat', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ to: peer.peer.deviceId, text: trimmed, raw: !ai }),
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok || data.ok !== true) showToast(reasonText(data.reason || 'chat-failed'))
+            else showToast(ai ? '已发给对方桌宠，等它回复' : '消息已送达')
+          } catch {
+            showToast('发送失败：中继没有连上')
+          }
           return
         }
         if (item.intent === 'action') return sendIntent(peer.peer, 'action', item.note)

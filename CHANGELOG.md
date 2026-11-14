@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.3
+
+- 修复对方宠物睡着时投喂/摸摸头/动作等互动失败：dsh-pet 在睡觉期间会拒绝 `/anim`、`/broadcast`、`/chat`（`reason: sleeping`）。现在桥接层先读 `/state` 的 `pets.<id>.sleep` 判断睡眠，互动前自动 `/wake` 再执行；「哄睡」只调 `/sleep`、不再广播（否则必被拒）；已在睡时再哄睡直接成功。
+- 动作清单与 dsh-pet 的 `animationNames()` 对齐：补上 turn/drag/moves/events/baifan，右键「动作…」不会再漏项或因名字不在白名单被拒。
+- 右键菜单新增「发文字消息…」（`raw:true`，直达对方的宠物气泡/面板，不经过模型）与「AI 聊天…」；面板聊天输入框保留。
+- 互动失败可见化：`/interact` 或 reaction 失败时按 reason 弹提示（sleeping / locked / unknown-animation / rate-limited / pet-call-failed 等），不再静默。
+- 宠物睡着时 AI 聊天也会先叫醒再调用它的 LLM。
+- 测试增至 37 个（睡觉自动叫醒、哄睡不广播、睡着时聊天先叫醒）。
+
 ## 0.8.2
 
 - 修复右键菜单打开后点任何一项都没反应：访客覆盖层 `.dpo-guest-layer` 是 `pointer-events:none`，菜单和遮罩没有恢复 `pointer-events:auto`，整块菜单对鼠标透明。现在菜单容器、菜单项、遮罩都显式 `auto`，菜单内 pointerdown 不再冒泡；禁用项样式也补上。
