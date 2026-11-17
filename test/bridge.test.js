@@ -54,13 +54,18 @@ function fakePetServer(options = {}) {
       return
     }
     if (url.pathname === '/dsh-music/prefs') {
-      json({
-        ok: true,
-        prefs: {
-          'dsh-music-playback': JSON.stringify({ name: '旧歌', artists: ['旧歌手'], ts: 1000 }),
-          'dsh-music-qq-playback': JSON.stringify({ name: '晴天', artists: ['周杰伦'], ts: Date.now() }),
-        },
-      })
+      const prefs = {
+        'dsh-music-playback': JSON.stringify({ name: '旧歌', artists: ['旧歌手'], ts: 1000 }),
+        'dsh-music-qq-playback': JSON.stringify({ name: '晴天', artists: ['周杰伦'], ts: Date.now() }),
+      }
+      if (options.radio === true) {
+        delete prefs['dsh-music-qq-playback']
+        prefs['dsh-music-radio-playback'] = JSON.stringify({
+          station: { id: 'station-1', name: '城市民谣台', url: 'https://radio.example.com/live.mp3' },
+          ts: Date.now(),
+        })
+      }
+      json({ ok: true, prefs })
       return
     }
     const record = { method: req.method, path: url.pathname }
@@ -129,6 +134,20 @@ test('bridge：读最近播放的音乐', async () => {
   assert.equal(now.track.name, '晴天')
   assert.deepEqual(now.track.artists, ['周杰伦'])
   assert.equal(now.track.source, 'qq')
+  await new Promise((r) => {
+    server.closeAllConnections?.()
+    server.close(r)
+  })
+})
+
+test('bridge：电台播放也能识别为「正在播放」（带流地址）', async () => {
+  const { server } = await fakePetServer({ radio: true })
+  const bridge = createLocalBridge(ctxFor(`http://127.0.0.1:${server.address().port}`))
+  const now = await bridge.musicNow()
+  assert.equal(now.ok, true)
+  assert.equal(now.track.name, '城市民谣台')
+  assert.equal(now.track.source, 'radio')
+  assert.equal(now.track.url, 'https://radio.example.com/live.mp3')
   await new Promise((r) => {
     server.closeAllConnections?.()
     server.close(r)

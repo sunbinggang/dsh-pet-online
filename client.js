@@ -38,8 +38,10 @@ window.__ModuleLoader__.load({
       '.dpo-guest-layer.dpo-menu-open{z-index:2147483000}',
       '.dpo-menu-sep{height:1px;margin:4px 8px;background:var(--dsw-alias-border-l1,rgba(148,163,184,.28))}',
       '.dpo-menu-sub{max-height:260px;overflow:auto}',
-      '.dpo-share-music{position:fixed;right:16px;bottom:16px;z-index:2147483001;max-width:300px;padding:8px 10px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 8px 24px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;pointer-events:auto}',
+      '.dpo-share-music{position:fixed;right:16px;bottom:16px;z-index:2147483001;max-width:300px;padding:8px 26px 8px 10px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 8px 24px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;pointer-events:auto}',
       '.dpo-share-music-title{font-weight:600;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dpo-share-music-close{position:absolute;top:2px;right:4px;width:18px;height:18px;padding:0;border:0;background:transparent;color:inherit;font-size:14px;line-height:18px;cursor:pointer;opacity:.6}',
+      '.dpo-share-music-close:hover{opacity:1}',
       '.dpo-chat-input{flex:1 1 160px;min-width:120px;border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));background:var(--dsw-alias-bg-base,transparent);color:inherit;border-radius:8px;padding:4px 8px;font-size:12px}',
       '.dpo-guest{position:absolute;left:0;top:0;display:flex;flex-direction:column;align-items:center;will-change:transform;touch-action:none}',
       '.dpo-guest video{display:block;pointer-events:none;filter:drop-shadow(0 6px 10px rgba(0,0,0,.18))}',
@@ -95,7 +97,7 @@ window.__ModuleLoader__.load({
     let lastDirectMusicAt = 0
     let pendingMusic = null
     let musicUnlockArmed = false
-    let sharedState = { seq: 0, playing: false, title: '', fromName: '', error: '', blocked: false, track: null }
+    let sharedState = { seq: 0, playing: false, title: '', fromName: '', error: '', blocked: false, track: null, hidden: false }
     const sharedListeners = new Set()
     function sharedSet(patch) {
       sharedState = { ...sharedState, ...patch }
@@ -164,7 +166,101 @@ window.__ModuleLoader__.load({
       document.addEventListener('pointerdown', retry, true)
     }
 
+    // ---- 本机「正在播放什么」：直读 dsh-music-player 的 prefs，不依赖宿主快照 ----
+    // 播放器写 prefs 有 800ms 防抖，宿主 GET /dsh-music/prefs 有时还是旧快照，
+    // 表现为「播放器明明在放，却说没有正在播放音乐」。这里在页面内截获播放器自己
+    // 的 prefs 写入（POST body 就是最新值），共享时优先用这份内存快照。
+    let musicPrefsCache = {}
+
+    function mergeMusicPrefs(patch, remove) {
+      if (patch && typeof patch === 'object') {
+        for (const key of Object.keys(patch)) musicPrefsCache[key] = patch[key]
+      }
+      if (Array.isArray(remove)) for (const key of remove) delete musicPrefsCache[key]
+    }
+
+    function readTrackFromPrefs(prefs) {
+      const keys = [
+        'dsh-music-playback',
+        'dsh-music-qq-playback',
+        'dsh-music-kg-playback',
+        'dsh-music-nc-playback',
+        'dsh-music-radio-playback',
+      ]
+      let best = null
+      for (const key of keys) {
+        let value = prefs[key]
+        if (typeof value === 'string') {
+          try {
+            value = JSON.parse(value)
+          } catch {
+            continue
+          }
+        }
+        if (!value || typeof value !== 'object') continue
+        const ts = Number(value.ts) || 0
+        if (key === 'dsh-music-radio-playback') {
+          const station = value.station && typeof value.station === 'object' ? value.station : null
+          const stationName = station && typeof station.name === 'string' ? station.name.trim() : ''
+          const stationUrl = station && typeof station.url === 'string' ? station.url.trim() : ''
+          if (stationName === '' || !/^https?:\/\//i.test(stationUrl)) continue
+          if (best === null || ts > best.ts) {
+            best = {
+              id: 'radio:' + String(station.id || station.stationuuid || ''),
+              name: stationName,
+              artists: [],
+              source: 'radio',
+              url: stationUrl,
+              ts,
+            }
+          }
+          continue
+        }
+        const name = typeof value.name === 'string' ? value.name.trim() : ''
+        if (name === '') continue
+        if (best === null || ts > best.ts) {
+          best = {
+            id: typeof value.id === 'string' ? value.id : '',
+            name,
+            artists: Array.isArray(value.artists) ? value.artists.filter((a) => typeof a === 'string') : [],
+            source: key.replace(/^dsh-music-/, '').replace(/-playback$/, '') || 'local',
+            ts,
+          }
+        }
+      }
+      if (best === null) return null
+      const track = { id: best.id, name: best.name, artists: best.artists, source: best.source }
+      if (best.url) track.url = best.url
+      return track
+    }
+
+    /** 共享前读一次「当前播放」：内存快照 → 直读宿主 prefs（带短暂重试）。 */
+    async function currentMusicTrack() {
+      const cached = readTrackFromPrefs(musicPrefsCache)
+      if (cached) return cached
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          const res = await fetch('/dsh-music/prefs', { cache: 'no-store' })
+          if (res.ok) {
+            const data = await res.json()
+            if (data && data.prefs && typeof data.prefs === 'object') {
+              mergeMusicPrefs(data.prefs)
+              const track = readTrackFromPrefs(data.prefs)
+              if (track) return track
+            }
+          }
+        } catch {
+          /* 音乐插件没装：下面统一返回 null */
+        }
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 300))
+      }
+      return null
+    }
+
     async function resolveSharedSource(track) {
+      const source = String(track.source ?? 'local')
+      // 电台：对端只可能带流地址过来，直接播这个地址。
+      if (source === 'radio' && typeof track.url === 'string' && /^https?:\/\//i.test(track.url)) return track.url
       try {
         const res = await fetch('/dsh-music/manifest', { cache: 'no-store' })
         if (res.ok) {
@@ -182,7 +278,6 @@ window.__ModuleLoader__.load({
       } catch {
         /* 音乐插件没装或没开：继续尝试在线源 */
       }
-      const source = String(track.source ?? 'local')
       const rawId = String(track.id ?? '')
       const key = rawId.startsWith(source + ':') ? rawId.slice(source.length + 1) : rawId
       if (key === '') return ''
@@ -201,7 +296,7 @@ window.__ModuleLoader__.load({
         sharedSet({ playing: false, blocked: false, title, fromName, error: '本机曲库和在线源都没有这首歌' })
         return
       }
-      sharedSet({ playing: true, blocked: false, title, fromName, error: '', seq: Date.now(), track })
+      sharedSet({ playing: true, blocked: false, title, fromName, error: '', seq: Date.now(), track, hidden: false })
       try {
         if (sharedAudio === null) {
           sharedAudio = new Audio()
@@ -234,6 +329,15 @@ window.__ModuleLoader__.load({
 
     async function resolveMusicIntent(track) {
       const source = String(track.source ?? 'local')
+      if (source === 'radio' && typeof track.url === 'string' && /^https?:\/\//i.test(track.url)) {
+        return {
+          action: 'play',
+          kind: 'radio',
+          id: String(track.id ?? ''),
+          name: track.name,
+          radioUrl: track.url,
+        }
+      }
       const rawId = String(track.id ?? '')
       const key = rawId.startsWith(source + ':') ? rawId.slice(source.length + 1) : rawId
       if (source === 'nc' && /^\d+$/.test(key)) {
@@ -273,7 +377,7 @@ window.__ModuleLoader__.load({
       musicIntentOverride = intent
       stopSharedMusic()
       const artists = Array.isArray(track.artists) && track.artists.length > 0 ? ' - ' + track.artists.join('/') : ''
-      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '已在音乐播放器里切到这一首', track })
+      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '已在音乐播放器里切到这一首', track, hidden: false })
       if (musicIntentFallback !== null) clearTimeout(musicIntentFallback)
       // 5 秒内没人来取意图，说明音乐插件没开：退回插件内播放器，别让用户干等。
       musicIntentFallback = setTimeout(() => {
@@ -315,6 +419,7 @@ window.__ModuleLoader__.load({
 
     function Panel() {
       const { snap, error } = useSnapshot()
+      const shared = useSharedMusic()
       const [code, setCode] = useState('')
       const [busy, setBusy] = useState(false)
       const [notice, setNotice] = useState('')
@@ -442,13 +547,17 @@ window.__ModuleLoader__.load({
         )
 
       const shareMusicAll = async () => {
-        const now = await getJson('/music/now')
-        if (!now || now.ok !== true || !now.track) {
+        let track = await currentMusicTrack()
+        if (!track) {
+          const now = await getJson('/music/now')
+          if (now && now.ok === true && now.track) track = now.track
+        }
+        if (!track) {
           toast('本机没有正在播放的音乐')
           return
         }
-        const artists = Array.isArray(now.track.artists) ? now.track.artists.join('/') : ''
-        await interactAll('music', now.track.name + (artists ? ' - ' + artists : ''), now.track)
+        const artists = Array.isArray(track.artists) ? track.artists.join('/') : ''
+        await interactAll('music', track.name + (artists ? ' - ' + artists : ''), track)
       }
 
       /** 立刻把本机正在播的曲子推给全房间，让对端 dsh-music-player 切到同一首。 */
@@ -749,6 +858,13 @@ window.__ModuleLoader__.load({
               '允许对方让我播放同一首（自动播放，仅本机曲库/已登录在线源）',
             ),
           ),
+          shared.hidden && shared.title !== ''
+            ? h(
+                'button',
+                { className: 'dpo-btn', style: { marginTop: 4 }, onClick: () => sharedSet({ hidden: false }) },
+                '显示共享播放条',
+              )
+            : null,
           h(
             'div',
             { className: 'dpo-row', style: { marginTop: 4 } },
@@ -981,6 +1097,30 @@ window.__ModuleLoader__.load({
       window.fetch = function patchedFetch(input, init) {
         try {
           const url = typeof input === 'string' ? input : input && typeof input.url === 'string' ? input.url : ''
+          // 跟着 dsh-music-player 自己的 prefs 写入，保持一份最新的「正在播放」快照。
+          if (/\/dsh-music\/prefs(\?|$)/.test(url)) {
+            const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase()
+            if (method === 'POST') {
+              try {
+                const body = init && typeof init.body === 'string' ? init.body : ''
+                if (body !== '') {
+                  const parsed = JSON.parse(body)
+                  mergeMusicPrefs(parsed.prefs, parsed.remove)
+                }
+              } catch {
+                /* 不是 JSON 就忽略 */
+              }
+            } else if (method === 'GET') {
+              const pending = original(input, init)
+              void pending
+                .then((res) => res.clone().json())
+                .then((data) => {
+                  if (data && data.prefs && typeof data.prefs === 'object') mergeMusicPrefs(data.prefs)
+                })
+                .catch(() => {})
+              return pending
+            }
+          }
           // 对端切歌：把待播意图喂给 dsh-music-player 的 /intent 轮询，让它自己播。
           if (musicIntentOverride !== null && /\/dsh-music\/intent(\?|$)/.test(url)) {
             const intent = musicIntentOverride
@@ -1422,15 +1562,20 @@ window.__ModuleLoader__.load({
 
       const shareMusic = async (peer) => {
         try {
-          const res = await fetch(BASE + '/music/now', { cache: 'no-store' })
-          const data = await res.json()
-          if (!data || data.ok !== true || !data.track) {
+          // 优先用页面内截获的播放器 prefs 快照：宿主快照有 800ms 防抖，刚切歌时会误报「没有在播放」。
+          let track = await currentMusicTrack()
+          if (!track) {
+            const res = await fetch(BASE + '/music/now', { cache: 'no-store' })
+            const data = await res.json()
+            if (data && data.ok === true && data.track) track = data.track
+          }
+          if (!track) {
             showToast('音乐播放器当前没有在播放音乐')
             return
           }
-          const track =
-            data.track.name + (data.track.artists && data.track.artists.length > 0 ? ' - ' + data.track.artists.join('/') : '')
-          if (await sendIntent(peer, 'music', track.slice(0, 40), data.track)) showToast('已共享：' + track)
+          const label =
+            track.name + (track.artists && track.artists.length > 0 ? ' - ' + track.artists.join('/') : '')
+          if (await sendIntent(peer, 'music', label.slice(0, 40), track)) showToast('已共享：' + label)
         } catch {
           showToast('共享音乐失败')
         }
@@ -1522,7 +1667,7 @@ window.__ModuleLoader__.load({
               }))),
             ]
           : guestMenu(menu.peer)
-      const hasContent = sprites.length > 0 || menu !== null || shared.title !== '' || compose !== null
+      const hasContent = sprites.length > 0 || menu !== null || (shared.title !== '' && !shared.hidden) || compose !== null
       return hasContent
         ? h(
             'div',
@@ -1607,10 +1752,19 @@ window.__ModuleLoader__.load({
                   ),
                 )
               : null,
-            shared.title !== ''
+            shared.title !== '' && !shared.hidden
               ? h(
                   'div',
                   { className: 'dpo-share-music' },
+                  h(
+                    'button',
+                    {
+                      className: 'dpo-share-music-close',
+                      title: '隐藏播放条（下一首共享时会重新出现）',
+                      onClick: () => sharedSet({ hidden: true }),
+                    },
+                    '×',
+                  ),
                   h('div', { className: 'dpo-share-music-title' }, '♪ ' + shared.title),
                   h(
                     'div',

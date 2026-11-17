@@ -23,6 +23,13 @@ test('protocol：sanitizeTrack 收窄音乐信息', () => {
   const odd = sanitizeTrack({ id: '../../etc/passwd', name: '歌', source: 'quote' })
   assert.equal(odd.id, 'etcpasswd')
   assert.equal(odd.source, 'local')
+
+  // 电台没有可映射的曲目 id，只带 http(s) 流地址；其它来源不接受 url 字段。
+  const radio = sanitizeTrack({ name: '城市民谣台', source: 'radio', url: 'https://radio.example.com/live.mp3' })
+  assert.equal(radio.source, 'radio')
+  assert.equal(radio.url, 'https://radio.example.com/live.mp3')
+  assert.equal('url' in sanitizeTrack({ name: '歌', source: 'qq', url: 'https://x/y.mp3' }), false)
+  assert.equal('url' in sanitizeTrack({ name: '台', source: 'radio', url: 'javascript:alert(1)' }), false)
 })
 
 test('protocol：summarizePet 透出可用动作清单', () => {

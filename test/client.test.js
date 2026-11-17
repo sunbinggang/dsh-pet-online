@@ -144,3 +144,19 @@ test('浏览器半侧：房间切歌交给 dsh-music-player，而不是再挂一
   assert.match(source, /resolveMusicIntent/, 'need to map a shared track to a music-player intent')
   assert.match(source, /syncMusicNow/, 'panel needs a manual sync button')
 })
+
+test('浏览器半侧：共享音乐用页面内最新 prefs 快照，播放条可隐藏', async () => {
+  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  // 播放器写宿主 prefs 有 800ms 防抖，刚切歌时宿主快照还是旧的：共享必须优先用页面内截获的值。
+  assert.match(source, /readTrackFromPrefs/, 'need to read a track out of player prefs')
+  assert.match(source, /mergeMusicPrefs/, 'need to keep a fresh prefs snapshot')
+  assert.match(source, /currentMusicTrack/, 'share must ask for the freshest current track')
+  assert.match(source, /\/dsh-music\/prefs/, 'must observe the music player prefs endpoint')
+  // 电台只有 station 对象：识别成正在播放，并把流地址带给对端。
+  assert.match(source, /kind: 'radio'/, 'radio needs a music-player intent')
+  assert.match(source, /radioUrl/)
+  // 右下角播放条可关闭，下一首共享时重新出现；面板能再打开。
+  assert.match(source, /dpo-share-music-close/, 'share bar needs a close button')
+  assert.match(source, /sharedSet\(\{ hidden: true \}\)/)
+  assert.match(source, /显示共享播放条/)
+})
