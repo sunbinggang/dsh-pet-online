@@ -124,6 +124,11 @@ test('浏览器半侧：模块契约与两个插槽注册', async () => {
   const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(source, /bubbleImage/, 'guest bubble must render the peer bubble image')
   assert.match(source, /\/dsh-pet-7340\/pic\/memes\//, 'bubble image must come from dsh-pet meme route')
+
+  // 聊天记录要带时间：时间样式、格式化函数与渲染都在。
+  assert.match(css, /\.dpo-chat-time\{/, 'missing chat time style')
+  assert.match(source, /function formatChatTime\(/, 'need a chat time formatter')
+  assert.match(source, /formatChatTime\(m\.at\)/, 'chat lines must render the message time')
 })
 
 test('浏览器半侧：留言/聊天用自带输入框，不依赖 window.prompt', async () => {

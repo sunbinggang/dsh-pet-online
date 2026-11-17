@@ -54,6 +54,7 @@ window.__ModuleLoader__.load({
       '.dpo-guest.dpo-sleeping{opacity:.55}',
       '.dpo-guest-zzz{font-size:12px;color:#94a3b8}',
       '.dpo-chat-line{padding:3px 0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-primary,#e2e8f0)}',
+      '.dpo-chat-time{display:inline-block;min-width:34px;margin-right:6px;color:var(--dsw-alias-label-tertiary,#94a3b8);font-variant-numeric:tabular-nums;font-size:11px}',
       '.dpo-menu-backdrop{position:fixed;inset:0;z-index:30;pointer-events:auto}',
       '.dpo-menu{position:fixed;z-index:31;min-width:150px;padding:4px;border-radius:10px;background:var(--dsw-alias-bg-base,#111827);border:1px solid var(--dsw-alias-border-l1,rgba(148,163,184,.35));box-shadow:0 10px 30px rgba(0,0,0,.35);pointer-events:auto}',
       '.dpo-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--dsw-alias-label-primary,#e2e8f0);font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer;pointer-events:auto}',
@@ -559,6 +560,21 @@ window.__ModuleLoader__.load({
       return { snap, error }
     }
 
+    // 聊天记录时间：今天只显示 HH:MM，跨天补 M/D，避免长会话里看不出先后。
+    function formatChatTime(at) {
+      const t = Number(at)
+      if (!Number.isFinite(t) || t <= 0) return ''
+      const d = new Date(t)
+      const pad = (n) => String(n).padStart(2, '0')
+      const hm = pad(d.getHours()) + ':' + pad(d.getMinutes())
+      const now = new Date()
+      const sameDay =
+        d.getFullYear() === now.getFullYear() &&
+        d.getMonth() === now.getMonth() &&
+        d.getDate() === now.getDate()
+      return sameDay ? hm : d.getMonth() + 1 + '/' + d.getDate() + ' ' + hm
+    }
+
     function Panel() {
       const { snap, error } = useSnapshot()
       const shared = useSharedMusic()
@@ -909,6 +925,7 @@ window.__ModuleLoader__.load({
                         h(
                           'div',
                           { className: 'dpo-chat-line', key: m.at + m.from },
+                          h('span', { className: 'dpo-chat-time' }, formatChatTime(m.at)),
                           h('b', null, m.from === 'me' ? '我：' : peer.name + '：'),
                           m.text,
                           m.raw ? h('span', { className: 'dpo-muted' }, '（文字）') : null,
