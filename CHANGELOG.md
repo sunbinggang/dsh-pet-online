@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.4
+
+- 切歌升级为**同步播放**：`music-sync` 的 `track` 现在带 `position`（秒），切歌时对端从同一进度接着放，不再从头开始。接收端按意图 id 找到 dsh-music-player 的 `<audio>` 后 `currentTime = position`，必要时等 `loadedmetadata` 再校准一次；插件内播放器兜底时同样 seek。
+- 进度心跳：播放中每隔 4~5 秒（跟随播放器 prefs 写回）把最新 `position` 再发一次，宿主只推进 `posSeq`、不换 `seq`，接收端据此把本机播放器校准到对端进度（漂移超过 1.5 秒才 seek，不打断正常播放）。
+- 跟播期间（15 秒内有对端进度心跳）抑制本机把同一首的进度反弹回房间，避免两边互相校准抖动。
+- 测试 48 个（`sanitizeTrack` 进度透传、同曲心跳只增 `posSeq` 不换 `seq`、客户端 seek/校准契约）。
+
 ## 0.10.3
 
 - 修复「同步当前播放」报 `not-playing`：以前只读宿主 `/dsh-music/prefs` 快照（有 800ms 防抖，刚切歌时可能还是空的）。现在按钮先取页面内最新的曲目，连同 track 一起 POST `/music/sync`，宿主不再依赖快照。

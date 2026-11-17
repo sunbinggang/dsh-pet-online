@@ -30,6 +30,12 @@ test('protocol：sanitizeTrack 收窄音乐信息', () => {
   assert.equal(radio.url, 'https://radio.example.com/live.mp3')
   assert.equal('url' in sanitizeTrack({ name: '歌', source: 'qq', url: 'https://x/y.mp3' }), false)
   assert.equal('url' in sanitizeTrack({ name: '台', source: 'radio', url: 'javascript:alert(1)' }), false)
+
+  // 播放位置要带到对端，否则切歌只能从头放。
+  const at = sanitizeTrack({ id: 'nc:1', name: '歌', source: 'nc', position: 92.34 })
+  assert.equal(at.position, 92.3)
+  assert.equal('position' in sanitizeTrack({ id: 'nc:1', name: '歌', position: 0 }), false)
+  assert.equal('position' in sanitizeTrack({ id: 'nc:1', name: '歌', position: 'x' }), false)
 })
 
 test('protocol：summarizePet 透出可用动作清单', () => {

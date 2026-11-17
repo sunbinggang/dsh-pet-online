@@ -219,11 +219,13 @@ window.__ModuleLoader__.load({
         const name = typeof value.name === 'string' ? value.name.trim() : ''
         if (name === '') continue
         if (best === null || ts > best.ts) {
+          const pos = Number(value.position)
           best = {
             id: typeof value.id === 'string' ? value.id : '',
             name,
             artists: Array.isArray(value.artists) ? value.artists.filter((a) => typeof a === 'string') : [],
             source: key.replace(/^dsh-music-/, '').replace(/-playback$/, '') || 'local',
+            position: Number.isFinite(pos) && pos > 0 ? pos : 0,
             ts,
           }
         }
@@ -231,6 +233,7 @@ window.__ModuleLoader__.load({
       if (best === null) return null
       const track = { id: best.id, name: best.name, artists: best.artists, source: best.source }
       if (best.url) track.url = best.url
+      if (best.position > 0) track.position = best.position
       return track
     }
 
@@ -238,8 +241,12 @@ window.__ModuleLoader__.load({
     // 宿主每 2.5 秒读一次 prefs 也能发现，但它读的是防抖后的快照，且电台/讲书等
     // 场景可能读不到；页面这份快照更及时，自动连播下一首也能立刻同步给房间。
     let lastAutoSyncKey = ''
+    let lastAutoSentPos = -1
     let autoSyncPrimed = false
     let lastRemoteApplyKey = ''
+    let lastRemoteApplyAt = 0
+    let lastRemoteSyncAt = 0
+    let lastAlignAt = 0
     let autoSyncTimer = null
     let pendingAutoSyncTrack = null
 
@@ -256,15 +263,24 @@ window.__ModuleLoader__.load({
     function scheduleAutoMusicSync(track) {
       if (!track || typeof track.name !== 'string' || track.name === '') return
       const key = trackKeyOf(track)
-      if (key === '' || key === lastRemoteApplyKey) return
+      if (key === '') return
+      // 正在跟随对端这首（进度心跳持续到达）时，本机播放器自己的进度写回不要再反弹回房间。
+      if (key === lastRemoteApplyKey && Date.now() - lastRemoteSyncAt < 15_000) return
       if (!autoSyncPrimed) {
         // 页面刚打开时先对齐当前曲目，不立刻广播（避免一刷新就把房间拽到自己这首）。
         autoSyncPrimed = true
         lastAutoSyncKey = key
+        lastAutoSentPos = Number(track.position) || 0
         return
       }
-      if (key === lastAutoSyncKey) return
-      lastAutoSyncKey = key
+      const pos = Number(track.position) || 0
+      if (key === lastAutoSyncKey) {
+        // 同一首的进度心跳：位置没动（暂停/暂停久了）就不打扰房间。
+        if (pos === lastAutoSentPos) return
+      } else {
+        lastAutoSyncKey = key
+      }
+      lastAutoSentPos = pos
       pendingAutoSyncTrack = track
       if (autoSyncTimer !== null) return
       autoSyncTimer = setTimeout(() => {
@@ -281,7 +297,8 @@ window.__ModuleLoader__.load({
     }
 
     /** 共享前读一次「当前播放」：内存快照 → 直读宿主 prefs（带短暂重试）。 */
-    async function currentMusicTrack() {      const cached = readTrackFromPrefs(musicPrefsCache)
+    async function currentMusicTrack() {
+      const cached = readTrackFromPrefs(musicPrefsCache)
       if (cached) return cached
       for (let attempt = 0; attempt < 4; attempt += 1) {
         try {
@@ -350,6 +367,18 @@ window.__ModuleLoader__.load({
           sharedAudio.addEventListener('error', () => sharedSet({ playing: false, error: '播放失败（可能是登录态或版权受限）' }))
         }
         sharedAudio.src = src
+        const pos = Number(track.position) || 0
+        if (pos > 0) {
+          const seek = () => {
+            try {
+              sharedAudio.currentTime = pos
+            } catch {
+              /* ignore */
+            }
+          }
+          if (sharedAudio.readyState >= 1) seek()
+          else sharedAudio.addEventListener('loadedmetadata', seek, { once: true })
+        }
         await sharedAudio.play()
         sharedSet({ playing: true, blocked: false })
       } catch (error) {
@@ -412,6 +441,67 @@ window.__ModuleLoader__.load({
       return null
     }
 
+    /** 找 dsh-music-player 正在用的 <audio>：按意图 id 匹配源码，退而取正在播放的那个。 */
+    function findPlayerAudio(intent) {
+      if (!intent) return null
+      const wanted = String(intent.id || '')
+      const nodes = Array.from(document.querySelectorAll('audio'))
+      for (const node of nodes) {
+        if (node === sharedAudio) continue
+        const src = String(node.currentSrc || node.src || '')
+        if (src === '') continue
+        if (wanted !== '' && src.includes(wanted)) return node
+      }
+      for (const node of nodes) {
+        if (node === sharedAudio) continue
+        if (!node.paused) return node
+      }
+      return null
+    }
+
+    /** 对端从 1:30 切过来时，让本机播放器也落到 1:30，而不是从头放。 */
+    function seekPlayerTo(intent, position) {
+      if (!(position > 0)) return
+      let tries = 0
+      const attempt = () => {
+        const node = findPlayerAudio(intent)
+        if (!node) {
+          tries += 1
+          if (tries < 40) setTimeout(attempt, 400)
+          return
+        }
+        const apply = () => {
+          try {
+            if (!(node.currentTime > 0) || Math.abs(node.currentTime - position) > 1.5) {
+              node.currentTime = position
+            }
+          } catch {
+            /* 还没可 seek，稍后再试 */
+          }
+        }
+        if (node.readyState >= 1) apply()
+        else node.addEventListener('loadedmetadata', apply, { once: true })
+        // 播放器有时先按旧进度起播、加载完再覆盖，这里补一次校准。
+        setTimeout(() => {
+          try {
+            if (node.readyState >= 1 && node.currentTime < 1 && position > 3) node.currentTime = position
+          } catch {
+            /* ignore */
+          }
+        }, 3000)
+      }
+      setTimeout(attempt, 400)
+    }
+
+    /** 同一首的进度心跳：把本机播放器校准到对端位置（不重新起播）。 */
+    async function alignRemotePosition(track) {
+      if (Date.now() - lastAlignAt < 2_500) return
+      lastAlignAt = Date.now()
+      const intent = await resolveMusicIntent(track)
+      if (intent === null) return
+      seekPlayerTo(intent, Number(track.position) || 0)
+    }
+
     /** 把对端曲目交给 dsh-music-player；没有可用的播放器时退回插件内播放。 */
     async function syncViaMusicPlayer(track, fromName) {
       const intent = await resolveMusicIntent(track)
@@ -424,7 +514,10 @@ window.__ModuleLoader__.load({
       // 这是我们按对端意图切过去的歌：本页的自动切歌检测不要把它再当成本机新切歌广播回去。
       lastRemoteApplyKey = trackKeyOf(track)
       lastAutoSyncKey = trackKeyOf(track)
+      lastAutoSentPos = Number(track.position) || 0
       autoSyncPrimed = true
+      lastRemoteApplyAt = Date.now()
+      seekPlayerTo(intent, Number(track.position) || 0)
       const artists = Array.isArray(track.artists) && track.artists.length > 0 ? ' - ' + track.artists.join('/') : ''
       sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '已在音乐播放器里切到这一首', track, hidden: false })
       if (musicIntentFallback !== null) clearTimeout(musicIntentFallback)
@@ -1552,6 +1645,7 @@ window.__ModuleLoader__.load({
       const toastTimer = React.useRef(0)
       const playedMusicSeq = React.useRef(0)
       const playedSyncSeq = React.useRef(0)
+      const playedSyncPosSeq = React.useRef(0)
       const lastReactionMsg = React.useRef('')
       const shared = useSharedMusic()
 
@@ -1569,11 +1663,24 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const sync = snap && snap.musicSync
         if (!sync || !sync.track || typeof sync.seq !== 'number') return
+        lastRemoteSyncAt = Date.now()
         if (playedSyncSeq.current >= sync.seq) return
         playedSyncSeq.current = sync.seq
         if (snap.config && snap.config.syncMusic === false) return
         void syncViaMusicPlayer(sync.track, sync.fromName)
       }, [snap && snap.musicSync && snap.musicSync.seq])
+
+      // 同一首的进度心跳：对端播到 1:30，本机也校准到 1:30，不重新起播。
+      React.useEffect(() => {
+        const sync = snap && snap.musicSync
+        if (!sync || !sync.track || typeof sync.posSeq !== 'number') return
+        lastRemoteSyncAt = Date.now()
+        if (playedSyncPosSeq.current >= sync.posSeq) return
+        playedSyncPosSeq.current = sync.posSeq
+        if (snap.config && snap.config.syncMusic === false) return
+        if (Date.now() - lastRemoteApplyAt < 2_500) return
+        void alignRemotePosition(sync.track)
+      }, [snap && snap.musicSync && snap.musicSync.posSeq])
 
       // 页面里第一次点击时顺手解锁音频：之后即使是对端自动推来的歌也能直接响。
       React.useEffect(() => {

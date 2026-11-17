@@ -325,6 +325,19 @@ test('端到端：一侧切歌，另一侧收到 music-sync 并交给本机音�
       () => b.snapshot().musicSync && b.snapshot().musicSync.track.id === 'nc:9999',
     )
 
+    // 同一首的进度心跳：位置更新只推 posSeq，不换 seq（接收端只校准，不重新起播）。
+    const before = b.snapshot().musicSync
+    await a.syncMusicNow({ id: 'nc:9999', name: '夜曲', artists: ['周杰伦'], source: 'nc', position: 66.6 })
+    const after = await waitUntil(
+      () => {
+        const s = b.snapshot().musicSync
+        return s && s.track.id === 'nc:9999' && s.track.position === 66.6 ? s : null
+      },
+      3000,
+    )
+    assert.equal(after.seq, before.seq)
+    assert.ok(after.posSeq > before.posSeq)
+
     // 关掉跟播时，页面自动上报的切歌不广播。
     await a.setConfig({ syncMusic: false })
     const muted = await a.syncMusicNow({ id: 'nc:10000', name: '稻香', source: 'nc' }, { auto: true })

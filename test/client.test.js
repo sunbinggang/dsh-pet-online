@@ -169,4 +169,8 @@ test('浏览器半侧：播放器自动连播下一首时由页面主动上报�
   assert.match(source, /auto: true/, 'auto sync must be marked so it respects the toggle')
   // 手动「同步当前播放」也要带上页面里的曲目，别等宿主快照。
   assert.match(source, /JSON\.stringify\(\{ track \}\)/, 'manual sync must send the track from the page')
+  // 同步播放要落到同一进度，而不是只切同一首。
+  assert.match(source, /seekPlayerTo/, 'receiver must seek to the shared position')
+  assert.match(source, /alignRemotePosition/, 'position heartbeats must re-align the player')
+  assert.match(source, /posSeq/)
 })
