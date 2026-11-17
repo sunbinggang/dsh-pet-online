@@ -139,6 +139,7 @@ test('端到端：A 的互动帧经 relay 到达 B，B 真的驱动本机 dsh-pe
   await waitUntil(() => a.snapshot().relay.status === 'online' && b.snapshot().relay.status === 'online')
   const peerB = await waitUntil(() => a.snapshot().peers.find((p) => p.deviceId === b.deviceId))
   assert.ok(peerB)
+  assert.match(peerB.version, /^\d+\.\d+\.\d+$/, 'peers must advertise their plugin version')
 
   const result = await a.interact({ to: b.deviceId, intent: 'wave' })
   assert.equal(result.ok, true, 'interact failed: ' + JSON.stringify(result))

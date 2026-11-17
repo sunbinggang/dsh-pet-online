@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.5
+
+- 在线设备列表显示对侧插件版本：presence 的 profile 带上 `pluginVersion`，宿主记到 peer 上（`/state` 的 `peers[].version`），面板每台设备显示「宠物 · v0.10.5」；版本未知时显示「版本未知」，方便排查双方版本不一致导致的功能差异。
+- 测试 48 个（新增对端版本透传断言）。
+
 ## 0.10.4
 
 - 切歌升级为**同步播放**：`music-sync` 的 `track` 现在带 `position`（秒），切歌时对端从同一进度接着放，不再从头开始。接收端按意图 id 找到 dsh-music-player 的 `<audio>` 后 `currentTime = position`，必要时等 `loadedmetadata` 再校准一次；插件内播放器兜底时同样 seek。

@@ -867,7 +867,11 @@ window.__ModuleLoader__.load({
                     'div',
                     { className: 'dpo-peer-main' },
                     h('div', { className: 'dpo-peer-name' }, peer.name + (peer.online ? '' : '（离线）')),
-                    h('div', { className: 'dpo-peer-meta' }, peer.pet || '未知宠物'),
+                    h(
+                      'div',
+                      { className: 'dpo-peer-meta' },
+                      (peer.pet || '未知宠物') + (peer.version ? ' · v' + peer.version : ' · 版本未知'),
+                    ),
                   ),
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'wave') }, '打招呼'),
                   h('button', { className: 'dpo-btn', disabled: busy, onClick: () => interact(peer, 'treat') }, '投喂'),
