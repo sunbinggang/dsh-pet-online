@@ -234,9 +234,54 @@ window.__ModuleLoader__.load({
       return track
     }
 
+    // ---- 本机自动切歌：由页面先发现（播放器 prefs 一写就知道），再让宿主广播 ----
+    // 宿主每 2.5 秒读一次 prefs 也能发现，但它读的是防抖后的快照，且电台/讲书等
+    // 场景可能读不到；页面这份快照更及时，自动连播下一首也能立刻同步给房间。
+    let lastAutoSyncKey = ''
+    let autoSyncPrimed = false
+    let lastRemoteApplyKey = ''
+    let autoSyncTimer = null
+    let pendingAutoSyncTrack = null
+
+    function trackKeyOf(track) {
+      if (!track || typeof track !== 'object') return ''
+      const source = String(track.source || 'local')
+      const id = typeof track.id === 'string' ? track.id : ''
+      if (id !== '') return source + ':' + id
+      const artists = Array.isArray(track.artists) ? track.artists.join(',') : ''
+      return source + ':name:' + canon(track.name) + '|' + canon(artists)
+    }
+
+    /** 播放器自己换了歌（含自动连播）：节流后把新曲目推给房间。 */
+    function scheduleAutoMusicSync(track) {
+      if (!track || typeof track.name !== 'string' || track.name === '') return
+      const key = trackKeyOf(track)
+      if (key === '' || key === lastRemoteApplyKey) return
+      if (!autoSyncPrimed) {
+        // 页面刚打开时先对齐当前曲目，不立刻广播（避免一刷新就把房间拽到自己这首）。
+        autoSyncPrimed = true
+        lastAutoSyncKey = key
+        return
+      }
+      if (key === lastAutoSyncKey) return
+      lastAutoSyncKey = key
+      pendingAutoSyncTrack = track
+      if (autoSyncTimer !== null) return
+      autoSyncTimer = setTimeout(() => {
+        autoSyncTimer = null
+        const pending = pendingAutoSyncTrack
+        pendingAutoSyncTrack = null
+        if (!pending) return
+        void fetch(BASE + '/music/sync', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ track: pending, auto: true }),
+        }).catch(() => {})
+      }, 800)
+    }
+
     /** 共享前读一次「当前播放」：内存快照 → 直读宿主 prefs（带短暂重试）。 */
-    async function currentMusicTrack() {
-      const cached = readTrackFromPrefs(musicPrefsCache)
+    async function currentMusicTrack() {      const cached = readTrackFromPrefs(musicPrefsCache)
       if (cached) return cached
       for (let attempt = 0; attempt < 4; attempt += 1) {
         try {
@@ -376,6 +421,10 @@ window.__ModuleLoader__.load({
       }
       musicIntentOverride = intent
       stopSharedMusic()
+      // 这是我们按对端意图切过去的歌：本页的自动切歌检测不要把它再当成本机新切歌广播回去。
+      lastRemoteApplyKey = trackKeyOf(track)
+      lastAutoSyncKey = trackKeyOf(track)
+      autoSyncPrimed = true
       const artists = Array.isArray(track.artists) && track.artists.length > 0 ? ' - ' + track.artists.join('/') : ''
       sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '已在音乐播放器里切到这一首', track, hidden: false })
       if (musicIntentFallback !== null) clearTimeout(musicIntentFallback)
@@ -563,7 +612,15 @@ window.__ModuleLoader__.load({
       /** 立刻把本机正在播的曲子推给全房间，让对端 dsh-music-player 切到同一首。 */
       const syncMusicNow = () =>
         run(async () => {
-          const res = await getJson('/music/sync', { method: 'POST', body: '{}' })
+          const track = await currentMusicTrack()
+          if (!track) {
+            setNotice('本机音乐播放器没有在播放')
+            return { ok: false, reason: 'not-playing' }
+          }
+          const res = await getJson('/music/sync', {
+            method: 'POST',
+            body: JSON.stringify({ track }),
+          })
           if (res && res.ok === false) {
             const map = { 'not-playing': '本机音乐播放器没有在播放', 'relay-offline': '还没有连上房间' }
             setNotice(map[res.reason] || '同步失败：' + (res.reason || '未知原因'))
@@ -1106,6 +1163,7 @@ window.__ModuleLoader__.load({
                 if (body !== '') {
                   const parsed = JSON.parse(body)
                   mergeMusicPrefs(parsed.prefs, parsed.remove)
+                  scheduleAutoMusicSync(readTrackFromPrefs(musicPrefsCache))
                 }
               } catch {
                 /* 不是 JSON 就忽略 */
@@ -1115,7 +1173,10 @@ window.__ModuleLoader__.load({
               void pending
                 .then((res) => res.clone().json())
                 .then((data) => {
-                  if (data && data.prefs && typeof data.prefs === 'object') mergeMusicPrefs(data.prefs)
+                  if (data && data.prefs && typeof data.prefs === 'object') {
+                    mergeMusicPrefs(data.prefs)
+                    scheduleAutoMusicSync(readTrackFromPrefs(musicPrefsCache))
+                  }
                 })
                 .catch(() => {})
               return pending

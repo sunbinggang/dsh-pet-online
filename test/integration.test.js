@@ -317,6 +317,20 @@ test('端到端：一侧切歌，另一侧收到 music-sync 并交给本机音�
     assert.equal(synced.id, 'nc:7788')
     assert.equal(synced.source, 'nc')
     assert.equal(sync.fromName, 'S1')
+
+    // 页面手里有最新曲目时直接给 track：不再依赖宿主 prefs 的防抖快照。
+    const direct = await a.syncMusicNow({ id: 'nc:9999', name: '夜曲', artists: ['周杰伦'], source: 'nc' })
+    assert.equal(direct.ok, true)
+    await waitUntil(
+      () => b.snapshot().musicSync && b.snapshot().musicSync.track.id === 'nc:9999',
+    )
+
+    // 关掉跟播时，页面自动上报的切歌不广播。
+    await a.setConfig({ syncMusic: false })
+    const muted = await a.syncMusicNow({ id: 'nc:10000', name: '稻香', source: 'nc' }, { auto: true })
+    assert.equal(muted.ok, false)
+    assert.equal(muted.reason, 'disabled')
+    await a.setConfig({ syncMusic: true })
   } finally {
     a.stop()
     b.stop()

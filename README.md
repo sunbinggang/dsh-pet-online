@@ -127,7 +127,7 @@ relay 是零依赖的纯 Node 服务：房间内存聚合、帧转发、限流�
 ## 开发
 
 ```bash
-node --test --test-force-exit  # 47 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
+node --test --test-force-exit  # 48 个测试：协议 / relay / 宿主 / 本机桥 / 浏览器契约 / 双实例端到端
 node scripts/selfcheck.mjs     # 不开 DSH 跑一遍完整联机链路，打印每一步
 node scripts/livecheck.mjs     # 真机联调：用新代码直接对接运行中的 dsh-pet（默认 62142）
 node scripts/install.mjs       # 装进本地 profile（幂等）

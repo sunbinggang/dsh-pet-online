@@ -160,3 +160,13 @@ test('浏览器半侧：共享音乐用页面内最新 prefs 快照，播放条�
   assert.match(source, /sharedSet\(\{ hidden: true \}\)/)
   assert.match(source, /显示共享播放条/)
 })
+
+test('浏览器半侧：播放器自动连播下一首时由页面主动上报切歌', async () => {
+  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  // 宿主每 2.5s 读的是防抖后的 prefs 快照；页面在 prefs 写入时就能知道换了歌，主动推给房间。
+  assert.match(source, /scheduleAutoMusicSync/, 'auto-play next must be reported from the page')
+  assert.match(source, /trackKeyOf/, 'need a stable key to detect a track change')
+  assert.match(source, /auto: true/, 'auto sync must be marked so it respects the toggle')
+  // 手动「同步当前播放」也要带上页面里的曲目，别等宿主快照。
+  assert.match(source, /JSON\.stringify\(\{ track \}\)/, 'manual sync must send the track from the page')
+})
