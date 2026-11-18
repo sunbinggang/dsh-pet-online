@@ -156,6 +156,9 @@ test('浏览器半侧：房间切歌交给 dsh-music-player，而不是再挂一
   // 分享音乐也走音乐播放器，不能另开隐藏 <audio> 造成「有声但播放器里没有」。
   assert.match(source, /if \(snap\.config && snap\.config\.syncMusic !== false\) void syncViaMusicPlayer\(music\.track/)
   assert.match(source, /stopSharedPlayback/)
+  // 回归：解锁用的静音 WAV 会把 sharedAudio.volume 降到 0，必须恢复；播放前也要强制音量。
+  assert.match(source, /sharedAudio\.volume = 1/, 'must restore the unlock volume')
+  assert.match(source, /if \(sharedAudio !== null && !sharedAudio\.paused\) return/, 'unlock must not clobber active playback')
 })
 
 test('浏览器半侧：共享音乐用页面内最新 prefs 快照，播放条可隐藏', async () => {

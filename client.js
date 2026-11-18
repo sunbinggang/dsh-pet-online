@@ -130,6 +130,8 @@ window.__ModuleLoader__.load({
     /** 在用户点击/勾选这类手势里放一段静音，解锁本页的 HTMLAudio 自动播放权限。 */
     function unlockSharedAudio() {
       try {
+        // 已经在放歌时不要拿静音 WAV 去覆盖同一个元素，否则会「状态在播放、声音没了」。
+        if (sharedAudio !== null && !sharedAudio.paused) return
         if (sharedAudio === null) sharedAudio = new Audio()
         sharedAudio.volume = 0
         sharedAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='
@@ -146,10 +148,21 @@ window.__ModuleLoader__.load({
                 /* ignore */
               }
             })
-            .catch(() => {})
+            .catch(() => {
+              // 静音 WAV 没播成功也要恢复音量，否则后续「正在播放」会静音。
+              try {
+                sharedAudio.volume = 1
+              } catch {
+                /* ignore */
+              }
+            })
         }
       } catch {
-        /* 解锁失败也不影响手动播放 */
+        try {
+          sharedAudio.volume = 1
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -370,12 +383,15 @@ window.__ModuleLoader__.load({
       }
       sharedSet({ playing: true, blocked: false, title, fromName, error: '', seq: Date.now(), track, hidden: false })
       try {
-        if (sharedAudio === null) {
+          if (sharedAudio === null) {
           sharedAudio = new Audio()
           sharedAudio.preload = 'auto'
           sharedAudio.addEventListener('ended', () => sharedSet({ playing: false }))
           sharedAudio.addEventListener('error', () => sharedSet({ playing: false, error: '播放失败（可能是登录态或版权受限）' }))
         }
+        // unlockSharedAudio 会临时把音量降到 0 播静音 WAV；任何一次没恢复都会让后面「正在播放」却没声音。
+        sharedAudio.volume = 1
+        sharedAudio.muted = false
         sharedAudio.src = src
         const pos = Number(track.position) || 0
         if (pos > 0) {
@@ -534,7 +550,11 @@ window.__ModuleLoader__.load({
       setTimeout(() => {
         const node = findPlayerAudio(intent)
         if (node && !node.paused && !node.ended) {
-          sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+          if (node.muted || node.volume === 0) {
+            sharedSet({ playing: true, blocked: false, error: '音乐播放器在播放，但当前是静音/音量为 0' })
+          } else {
+            sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+          }
         }
       }, 1800)
       if (musicIntentFallback !== null) clearTimeout(musicIntentFallback)
@@ -550,7 +570,11 @@ window.__ModuleLoader__.load({
         }
         const node = findPlayerAudio(intent)
         if (node && !node.paused && !node.ended) {
-          sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+          if (node.muted || node.volume === 0) {
+            sharedSet({ playing: true, blocked: false, error: '音乐播放器在播放，但当前是静音/音量为 0' })
+          } else {
+            sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+          }
           return
         }
         pendingMusic = { track, fromName, mode: 'player' }
