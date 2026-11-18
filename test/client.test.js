@@ -148,6 +148,14 @@ test('浏览器半侧：房间切歌交给 dsh-music-player，而不是再挂一
   assert.match(source, /new Response\(JSON\.stringify\(intent\)/, 'intent poll must answer with JSON')
   assert.match(source, /resolveMusicIntent/, 'need to map a shared track to a music-player intent')
   assert.match(source, /syncMusicNow/, 'panel needs a manual sync button')
+  // 热更新回归：fetch 包装只装一次，行为放 window.__dpoHooks；否则插件重载后旧闭包读不到新意图，
+  // 表现为「播放器不动、内置播放器偶尔出声」。
+  assert.match(source, /window\.__dpoHooks/)
+  assert.match(source, /hooks\.takeIntent/)
+  assert.match(source, /__dpoFetchWrapped/)
+  // 分享音乐也走音乐播放器，不能另开隐藏 <audio> 造成「有声但播放器里没有」。
+  assert.match(source, /if \(snap\.config && snap\.config\.syncMusic !== false\) void syncViaMusicPlayer\(music\.track/)
+  assert.match(source, /stopSharedPlayback/)
 })
 
 test('浏览器半侧：共享音乐用页面内最新 prefs 快照，播放条可隐藏', async () => {

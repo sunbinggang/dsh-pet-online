@@ -162,9 +162,18 @@ window.__ModuleLoader__.load({
         musicUnlockArmed = false
         const pending = pendingMusic
         pendingMusic = null
-        if (pending) void playSharedTrack(pending.track, pending.fromName)
+        if (!pending) return
+        if (pending.mode === 'player') void syncViaMusicPlayer(pending.track, pending.fromName)
+        else void playSharedTrack(pending.track, pending.fromName)
       }
       document.addEventListener('pointerdown', retry, true)
+    }
+
+    /** 停止共享播放：内置播放器直接停；如果声音在音乐播放器里，给它下发一条 stop 意图。 */
+    function stopSharedPlayback() {
+      if (sharedState.track && sharedState.playing) musicIntentOverride = { action: 'stop' }
+      stopSharedMusic()
+      sharedSet({ hidden: true })
     }
 
     // ---- 本机「正在播放什么」：直读 dsh-music-player 的 prefs，不依赖宿主快照 ----
@@ -520,15 +529,33 @@ window.__ModuleLoader__.load({
       lastRemoteApplyAt = Date.now()
       seekPlayerTo(intent, Number(track.position) || 0)
       const artists = Array.isArray(track.artists) && track.artists.length > 0 ? ' - ' + track.artists.join('/') : ''
-      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '已在音乐播放器里切到这一首', track, hidden: false })
+      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '正在音乐播放器里切换…', track, hidden: false })
+      // 播放器取到意图后一般 1~2 秒内起播，及时把状态从「切换中」改成「播放中」。
+      setTimeout(() => {
+        const node = findPlayerAudio(intent)
+        if (node && !node.paused && !node.ended) {
+          sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+        }
+      }, 1800)
       if (musicIntentFallback !== null) clearTimeout(musicIntentFallback)
-      // 5 秒内没人来取意图，说明音乐插件没开：退回插件内播放器，别让用户干等。
+      // 5 秒还没起播：挂成「下一次点击重试」，不再偷偷用内置播放器出声——否则用户会觉得
+      // 声音不知道从哪来、播放器里又没有这首歌。
       musicIntentFallback = setTimeout(() => {
         musicIntentFallback = null
         if (musicIntentOverride === intent) {
+          // 意图一直没人取：音乐插件没开，退内置播放器。
           musicIntentOverride = null
-          void playSharedTrack(track, fromName)
+          playSharedTrack(track, fromName).catch(() => {})
+          return
         }
+        const node = findPlayerAudio(intent)
+        if (node && !node.paused && !node.ended) {
+          sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+          return
+        }
+        pendingMusic = { track, fromName, mode: 'player' }
+        armMusicUnlockRetry()
+        sharedSet({ playing: false, blocked: true, error: '音乐播放器被浏览器拦截了，点页面任意位置重试' })
       }, 5000)
     }
 
@@ -780,9 +807,13 @@ window.__ModuleLoader__.load({
       }
 
       const playMusicShare = (item) => {
-        // 关键：必须在这次点击的手势里真正调用 audio.play()。
-        // 只 POST /music/play 的话，播放发生在后续轮询回调里，会被浏览器自动播放策略拦掉。
-        void playSharedFromGesture(item.track, item.fromName)
+        // 在点击手势里直接交给音乐播放器（轮询稍后取意图），不要再叠一个隐藏 <audio>。
+        if (snap && snap.config && snap.config.syncMusic === false) {
+          void playSharedFromGesture(item.track, item.fromName)
+        } else {
+          lastDirectMusicAt = Date.now()
+          void syncViaMusicPlayer(item.track, item.fromName)
+        }
         return run(
           () => getJson('/music/play', { method: 'POST', body: JSON.stringify({ seq: item.seq }) }),
           '已请求播放同一首',
@@ -1255,13 +1286,44 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 本机动作探针：dsh-pet 的动画素材都经 fetch('/dsh-pet-7340/thumb/<root>/<name>.webm') 拉取，
-     * 这里旁路观察请求，把「正在播的动画名」报给宿主转播给对端。
-     * 自己投影访客时用的 fetch 带 __dpo 标记，不会被误当成本机动作。
+     * 本机动作探针 + 音乐插件旁路。
+     * 关键点：包装函数只装一次，具体行为放在 window.__dpoHooks 里。
+     * 插件热更新后模块闭包会换新，但旧包装还挂在 window.fetch 上——若把状态闭包在
+     * 包装函数里，新的 musicIntentOverride 永远读不到，表现为「对端切歌后播放器不动，
+     * 只有内置播放器偶尔出声」。所以每次加载都刷新 hooks，包装统一从 hooks 取。
      */
     function installAnimProbe() {
-      if (typeof window === 'undefined' || window.__dpoAnimProbe === true || typeof window.fetch !== 'function') return
-      window.__dpoAnimProbe = true
+      if (typeof window === 'undefined' || typeof window.fetch !== 'function') return
+      const hooks = window.__dpoHooks || (window.__dpoHooks = {})
+      hooks.onPrefs = (parsed) => {
+        mergeMusicPrefs(parsed && parsed.prefs, parsed && parsed.remove)
+        scheduleAutoMusicSync(readTrackFromPrefs(musicPrefsCache))
+      }
+      hooks.onPrefsGet = (data) => {
+        if (data && data.prefs && typeof data.prefs === 'object') {
+          mergeMusicPrefs(data.prefs)
+          scheduleAutoMusicSync(readTrackFromPrefs(musicPrefsCache))
+        }
+      }
+      hooks.takeIntent = () => {
+        if (musicIntentOverride === null) return null
+        const intent = musicIntentOverride
+        musicIntentOverride = null
+        if (musicIntentFallback !== null) {
+          clearTimeout(musicIntentFallback)
+          musicIntentFallback = null
+        }
+        return intent
+      }
+      hooks.onAnim = (name) => {
+        void fetch(BASE + '/local-action', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ anim: name }),
+        }).catch(() => {})
+      }
+      if (window.__dpoFetchWrapped === true) return
+      window.__dpoFetchWrapped = true
       const original = window.fetch.bind(window)
       let lastName = ''
       let lastAt = 0
@@ -1274,11 +1336,7 @@ window.__ModuleLoader__.load({
             if (method === 'POST') {
               try {
                 const body = init && typeof init.body === 'string' ? init.body : ''
-                if (body !== '') {
-                  const parsed = JSON.parse(body)
-                  mergeMusicPrefs(parsed.prefs, parsed.remove)
-                  scheduleAutoMusicSync(readTrackFromPrefs(musicPrefsCache))
-                }
+                if (body !== '') hooks.onPrefs(JSON.parse(body))
               } catch {
                 /* 不是 JSON 就忽略 */
               }
@@ -1286,28 +1344,20 @@ window.__ModuleLoader__.load({
               const pending = original(input, init)
               void pending
                 .then((res) => res.clone().json())
-                .then((data) => {
-                  if (data && data.prefs && typeof data.prefs === 'object') {
-                    mergeMusicPrefs(data.prefs)
-                    scheduleAutoMusicSync(readTrackFromPrefs(musicPrefsCache))
-                  }
-                })
+                .then((data) => hooks.onPrefsGet(data))
                 .catch(() => {})
               return pending
             }
           }
           // 对端切歌：把待播意图喂给 dsh-music-player 的 /intent 轮询，让它自己播。
-          if (musicIntentOverride !== null && /\/dsh-music\/intent(\?|$)/.test(url)) {
-            const intent = musicIntentOverride
-            musicIntentOverride = null
-            if (musicIntentFallback !== null) {
-              clearTimeout(musicIntentFallback)
-              musicIntentFallback = null
+          if (/\/dsh-music\/intent(\?|$)/.test(url)) {
+            const intent = hooks.takeIntent()
+            if (intent !== null) {
+              return new Response(JSON.stringify(intent), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+              })
             }
-            return new Response(JSON.stringify(intent), {
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-            })
           }
           if (!(init && init.__dpo === true)) {
             const match = /\/dsh-pet-7340\/thumb\/[^/]+\/([^/]+)\.(webm|mov)$/.exec(url)
@@ -1317,11 +1367,7 @@ window.__ModuleLoader__.load({
               if (name !== lastName && now - lastAt > 200) {
                 lastName = name
                 lastAt = now
-                void original(BASE + '/local-action', {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({ anim: name }),
-                }).catch(() => {})
+                hooks.onAnim(name)
               }
             }
           }
@@ -1677,7 +1723,9 @@ window.__ModuleLoader__.load({
         playedMusicSeq.current = music.seq
         // 面板按钮已经在这个手势里播了同一首，轮询回来的同一条请求不再打断重播。
         if (Date.now() - lastDirectMusicAt < 5000) return
-        void playSharedTrack(music.track, music.fromName)
+        // 分享音乐也要走音乐播放器（同一首/同一进度），不要另开一个隐藏 <audio>。
+        if (snap.config && snap.config.syncMusic !== false) void syncViaMusicPlayer(music.track, music.fromName)
+        else void playSharedTrack(music.track, music.fromName)
       }, [snap && snap.music && snap.music.seq])
 
       // 对端切歌：优先让 dsh-music-player 自己切过去，插件不再叠一个 <audio>。
@@ -1967,11 +2015,21 @@ window.__ModuleLoader__.load({
                     shared.blocked && shared.track
                       ? h(
                           'button',
-                          { className: 'dpo-btn primary', onClick: () => playSharedTrack(shared.track, shared.fromName) },
-                          '播放',
+                          {
+                            className: 'dpo-btn primary',
+                            onClick: () => {
+                              // 播放器路径被拦截时，重试也要走音乐播放器；只有内置播放器才用直接播放。
+                              if (shared.error.includes('音乐播放器')) {
+                                void syncViaMusicPlayer(shared.track, shared.fromName)
+                              } else {
+                                void playSharedFromGesture(shared.track, shared.fromName)
+                              }
+                            },
+                          },
+                          '重试',
                         )
                       : null,
-                    h('button', { className: 'dpo-btn', onClick: stopSharedMusic }, '停止'),
+                    h('button', { className: 'dpo-btn', onClick: stopSharedPlayback }, '停止'),
                   ),
                 )
               : null,
