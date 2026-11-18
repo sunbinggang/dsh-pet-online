@@ -159,6 +159,8 @@ test('浏览器半侧：房间切歌交给 dsh-music-player，而不是再挂一
   // 回归：解锁用的静音 WAV 会把 sharedAudio.volume 降到 0，必须恢复；播放前也要强制音量。
   assert.match(source, /sharedAudio\.volume = 1/, 'must restore the unlock volume')
   assert.match(source, /if \(sharedAudio !== null && !sharedAudio\.paused\) return/, 'unlock must not clobber active playback')
+  // 同步播放直接在 dsh 音乐播放器里进行：插件播放条默认不弹。
+  assert.match(source, /正在音乐播放器里切换…', track, hidden: true/, 'synced playback must not pop the plugin bar')
 })
 
 test('浏览器半侧：共享音乐用页面内最新 prefs 快照，播放条可隐藏', async () => {

@@ -545,15 +545,16 @@ window.__ModuleLoader__.load({
       lastRemoteApplyAt = Date.now()
       seekPlayerTo(intent, Number(track.position) || 0)
       const artists = Array.isArray(track.artists) && track.artists.length > 0 ? ' - ' + track.artists.join('/') : ''
-      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '正在音乐播放器里切换…', track, hidden: false })
+      // 同步播放统一交给 dsh 音乐播放器：插件自己不弹右下角播放条，避免出现「两个播放器」。
+      sharedSet({ title: track.name + artists, fromName, playing: false, blocked: false, error: '正在音乐播放器里切换…', track, hidden: true })
       // 播放器取到意图后一般 1~2 秒内起播，及时把状态从「切换中」改成「播放中」。
       setTimeout(() => {
         const node = findPlayerAudio(intent)
         if (node && !node.paused && !node.ended) {
           if (node.muted || node.volume === 0) {
-            sharedSet({ playing: true, blocked: false, error: '音乐播放器在播放，但当前是静音/音量为 0' })
+            sharedSet({ playing: true, blocked: false, error: '音乐播放器在播放，但当前是静音/音量为 0', hidden: false })
           } else {
-            sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+            sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放', hidden: true })
           }
         }
       }, 1800)
@@ -571,15 +572,15 @@ window.__ModuleLoader__.load({
         const node = findPlayerAudio(intent)
         if (node && !node.paused && !node.ended) {
           if (node.muted || node.volume === 0) {
-            sharedSet({ playing: true, blocked: false, error: '音乐播放器在播放，但当前是静音/音量为 0' })
+            sharedSet({ playing: true, blocked: false, error: '音乐播放器在播放，但当前是静音/音量为 0', hidden: false })
           } else {
-            sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放' })
+            sharedSet({ playing: true, blocked: false, error: '正在音乐播放器里播放', hidden: true })
           }
           return
         }
         pendingMusic = { track, fromName, mode: 'player' }
         armMusicUnlockRetry()
-        sharedSet({ playing: false, blocked: true, error: '音乐播放器被浏览器拦截了，点页面任意位置重试' })
+        sharedSet({ playing: false, blocked: true, error: '音乐播放器被浏览器拦截了，点页面任意位置重试', hidden: false })
       }, 5000)
     }
 
